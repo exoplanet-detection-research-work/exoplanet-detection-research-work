@@ -11,7 +11,7 @@ The public API of this subpackage is:
 
 from __future__ import annotations
 
-from exodet.config.loader import load_config, load_yaml
+from exodet.config.loader import load_config, load_experiment_config, load_yaml
 from exodet.config.schema import (
     ComponentConfig,
     DataConfig,
@@ -35,5 +35,6 @@ __all__ = [
     "PreprocessingConfig",
     "TrainingConfig",
     "load_config",
+    "load_experiment_config",
     "load_yaml",
 ]

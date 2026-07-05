@@ -23,7 +23,7 @@ import yaml
 from exodet.config.schema import ExperimentConfig
 from exodet.exceptions import ConfigurationError
 
-__all__ = ["load_yaml", "deep_merge", "apply_overrides", "load_config"]
+__all__ = ["load_yaml", "deep_merge", "apply_overrides", "load_config", "load_experiment_config"]
 
 logger = logging.getLogger(__name__)
 
@@ -212,3 +212,20 @@ def load_config(
     raw = _resolve_defaults(load_yaml(path), path.parent)
     raw = apply_overrides(raw, overrides)
     return ExperimentConfig.from_dict(raw)
+
+
+def load_experiment_config(
+    path: Path | str, overrides: Iterable[str] = ()
+) -> ExperimentConfig:
+    """Load experiment config from YAML that may include extra stage sections.
+
+    Combined configs (e.g. ``update.yaml`` with TCE, representation, and
+    ``update`` blocks) are supported by keeping only keys valid for
+    :class:`ExperimentConfig`.
+    """
+    path = Path(path)
+    logger.info("Loading experiment config: %s", path)
+    raw = _resolve_defaults(load_yaml(path), path.parent)
+    raw = apply_overrides(raw, overrides)
+    experiment_raw = {k: v for k, v in raw.items() if k in ExperimentConfig._KEYS}
+    return ExperimentConfig.from_dict(experiment_raw)

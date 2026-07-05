@@ -69,6 +69,10 @@ def _build_model(config: ExperimentConfig) -> BaseModel:
     Returns:
         A fresh model instance.
     """
+    import exodet.ml.models  # noqa: F401
+    import exodet.benchmarking.baselines  # noqa: F401
+    import exodet.models.registry  # noqa: F401
+
     return MODELS.build(
         config.model.architecture.name,
         **config.model.architecture.params,
@@ -88,6 +92,7 @@ def run_training(config: ExperimentConfig) -> TrainingResult | list[TrainingResu
     import exodet.training.research_trainer  # noqa: F401 — research trainer
     import exodet.models.registry  # noqa: F401 — neural architectures
     import exodet.ml.models  # noqa: F401 — register xgboost
+    import exodet.benchmarking.baselines  # noqa: F401 — sklearn baselines
 
     splits = _load_splits(config)
     trainer = build_trainer(config.training)

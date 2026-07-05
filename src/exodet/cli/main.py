@@ -117,14 +117,23 @@ def build_parser() -> argparse.ArgumentParser:
         ("sweep", "Run a hyperparameter sweep campaign."),
         ("leaderboard", "Build experiment leaderboards."),
         ("reproduce", "Validate experiment reproducibility."),
+        ("update", "Incremental dataset growth and training resume."),
     ):
         sub = subparsers.add_parser(command, help=help_text)
-        sub.add_argument(
-            "--config",
-            "-c",
-            required=command != "info",
-            help="Path to the experiment YAML config.",
-        )
+        if command == "update":
+            sub.add_argument(
+                "--config",
+                "-c",
+                default="configs/update.yaml",
+                help="Path to the update YAML config.",
+            )
+        else:
+            sub.add_argument(
+                "--config",
+                "-c",
+                required=command != "info",
+                help="Path to the experiment YAML config.",
+            )
         sub.add_argument(
             "--override",
             "-o",
@@ -134,6 +143,44 @@ def build_parser() -> argparse.ArgumentParser:
             help="Dotted-key config override (repeatable), "
             "e.g. -o training.epochs=100.",
         )
+    update_parser = subparsers.choices["update"]
+    update_parser.add_argument(
+        "--tic",
+        action="append",
+        default=[],
+        metavar="TIC_ID",
+        help="TESS TIC ID to ingest (repeatable).",
+    )
+    update_parser.add_argument(
+        "--tic-file",
+        metavar="PATH",
+        help="CSV/TXT/JSON file containing TIC IDs.",
+    )
+    update_parser.add_argument(
+        "--fits",
+        metavar="DIR",
+        help="Directory of downloaded FITS light curves.",
+    )
+    update_parser.add_argument(
+        "--processed",
+        metavar="DIR",
+        help="Directory of processed NPZ light curves.",
+    )
+    update_parser.add_argument(
+        "--resume",
+        choices=("latest", "best", "last"),
+        help="Checkpoint selection for training resume.",
+    )
+    update_parser.add_argument(
+        "--force-reprocess",
+        action="store_true",
+        help="Reprocess targets even if already registered.",
+    )
+    update_parser.add_argument(
+        "--fresh-start",
+        action="store_true",
+        help="Ignore existing checkpoints and initialize new weights.",
+    )
     return parser
 
 
@@ -297,9 +344,24 @@ def _run_download(args: argparse.Namespace) -> int:
     )
 
 
+def _prepare_experiment(args: argparse.Namespace) -> ExperimentConfig:
+    """Loads experiment config from pure or combined stage YAML files."""
+    from exodet.config.loader import load_experiment_config
+
+    config = load_experiment_config(args.config, overrides=args.override)
+    setup_logging(
+        config.logging,
+        log_dir=config.paths.log_dir,
+        run_name=config.experiment_name,
+    )
+    seed_everything(config.seed)
+    logger.info("Experiment '%s' initialized.", config.experiment_name)
+    return config
+
+
 def _run_train(args: argparse.Namespace) -> int:
     """Trains the configured model on representation dataset splits."""
-    config = _prepare(args)
+    config = _prepare_experiment(args)
     import exodet.ml.trainer  # noqa: F401 — register supervised trainer
     from exodet.ml.runner import run_training
 
@@ -311,7 +373,7 @@ def _run_train(args: argparse.Namespace) -> int:
 
 def _run_evaluate(args: argparse.Namespace) -> int:
     """Evaluates a trained model on the test split."""
-    config = _prepare(args)
+    config = _prepare_experiment(args)
     from exodet.ml.runner import run_evaluation
 
     report = run_evaluation(config)
@@ -321,7 +383,7 @@ def _run_evaluate(args: argparse.Namespace) -> int:
 
 def _run_predict(args: argparse.Namespace) -> int:
     """Scores the test split with a trained model."""
-    config = _prepare(args)
+    config = _prepare_experiment(args)
     from exodet.ml.runner import run_predict
 
     result = run_predict(config)
@@ -506,6 +568,38 @@ def _run_reproduce(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_update(args: argparse.Namespace) -> int:
+    from exodet.update.config import load_update_stage_config
+    from exodet.update.runner import run_update
+
+    experiment, _, _, _, _ = load_update_stage_config(args.config, args.override)
+    setup_logging(
+        experiment.logging,
+        log_dir=experiment.paths.log_dir,
+        run_name=experiment.experiment_name,
+    )
+    seed_everything(experiment.seed)
+    payload = run_update(
+        args.config,
+        overrides=args.override,
+        tic_ids=args.tic,
+        tic_file=args.tic_file,
+        fits_dir=args.fits,
+        processed_dir=args.processed,
+        resume=args.resume,
+        force_reprocess=args.force_reprocess,
+        fresh_start=args.fresh_start,
+    )
+    summary = payload["update"]
+    print(
+        f"Update complete: {summary['n_success']}/{summary['n_targets']} targets "
+        f"({summary['n_skipped']} skipped, {summary['n_failed']} failed)"
+    )
+    if payload.get("training"):
+        print(f"Training resumed; best checkpoint: {payload['training'].get('best_checkpoint')}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint.
 
@@ -544,6 +638,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "sweep": _run_sweep,
         "leaderboard": _run_leaderboard,
         "reproduce": _run_reproduce,
+        "update": _run_update,
     }
 
     try:

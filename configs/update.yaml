@@ -1,0 +1,101 @@
+# Incremental dataset update and checkpoint-resume training.
+# Run with: exodet update -c configs/update.yaml --tic 123456789
+
+defaults:
+  - base.yaml
+  - train_example.yaml
+  - tce_example.yaml
+  - representation_example.yaml
+
+experiment_name: exodet_incremental_v1
+seed: 42
+
+preprocessing:
+  steps:
+    - name: quality_filter
+      params:
+        bitmask: default
+    - name: nan_removal
+      params:
+        strategy: drop
+    - name: sector_stitch
+      params: {}
+    - name: gap_detect
+      params:
+        factor: 5.0
+    - name: gap_interpolate
+      params:
+        method: linear
+        max_gap_days: 0.5
+    - name: wotan_detrend
+      params:
+        method: biweight
+        window_length_days: 0.5
+    - name: sigma_clip
+      params:
+        sigma: 5.0
+        clip_lower: false
+    - name: normalize
+      params:
+        method: median
+    - name: quality_metrics
+      params:
+        cdpp_duration_hours: 1.0
+
+data:
+  source:
+    name: lightkurve_mission
+    params: {}
+  dataset:
+    name: synthetic_tess
+    params:
+      n_targets: 1
+
+update:
+  enabled: true
+  tic_ids: []
+  missions: [TESS, Kepler, K2]
+  parallel_workers: 4
+  force_reprocess: false
+  append_split: train
+  dataset_version: v1
+  resume_training: true
+  resume_strategy: continuation
+  experiment_mode: child
+  download:
+    backend: auto
+    flux_column: pdcsap_flux
+    quality_bitmask: default
+  checkpoint:
+    selection: latest
+    required: false
+  evaluation:
+    enabled: true
+    run_inference: false
+  report:
+    enabled: false
+  catalog:
+    incremental: true
+  benchmark:
+    enabled: false
+  leaderboard:
+    enabled: false
+
+experiments:
+  enabled: true
+  auto_register: true
+  tags: [incremental_update]
+
+n_figure_targets: 0
+n_figure_samples: 0
+
+splitting:
+  name: star
+  params:
+    validation_fraction: 0.1
+    test_fraction: 0.1
+    seed: 42
+
+cache:
+  enabled: true
+  compress: true
