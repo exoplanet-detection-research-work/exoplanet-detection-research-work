@@ -1,0 +1,67 @@
+defaults:
+  - train_example.yaml
+
+experiment_name: benchmark_suite_v1
+seed: 42
+
+benchmark:
+  enabled: true
+  models:
+    - logistic_regression
+    - random_forest
+    - mlp
+    - xgboost
+  include_neural: false
+  output_dir: null
+  splits:
+    - test
+  metrics:
+    - accuracy
+    - roc_auc
+    - pr_auc
+    - f1
+    - calibration_error
+  statistics:
+    n_bootstrap: 500
+  calibration:
+    enabled: true
+    n_bins: 10
+  error_analysis:
+    enabled: true
+  cross_mission:
+    enabled: true
+  figures:
+    enabled: true
+  reports:
+    formats:
+      - json
+      - markdown
+      - html
+      - csv
+      - pdf
+
+sensitivity:
+  enabled: true
+  perturbations:
+    - gaussian_noise
+    - red_noise
+    - missing_cadence
+    - period_offset
+    - depth_scale
+  levels:
+    - 0.0
+    - 0.01
+    - 0.05
+    - 0.1
+  output_name: sensitivity_report
+
+hyperparameter:
+  enabled: false
+  ranking_metric: roc_auc
+  max_trials: 8
+  parameters:
+    C: [0.1, 1.0, 10.0]
+    max_iter: [200, 500]
+
+ablation:
+  enabled: false

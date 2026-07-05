@@ -1,0 +1,95 @@
+# ML representation / dataset build configuration.
+# Run after preprocessing and TCE search:
+#   exodet dataset -c configs/representation_example.yaml
+
+experiment_name: representation_v1
+seed: 42
+dataset_version: v1
+
+paths:
+  processed_dir: data/processed
+  interim_dir: data/interim
+  figure_dir: outputs/figures
+  log_dir: outputs/logs
+  report_dir: outputs/reports
+
+logging:
+  level: INFO
+  to_file: true
+
+candidates_file: tce_candidates.json
+accepted_only: true
+n_figure_samples: 1
+
+folding:
+  name: standard
+  params:
+    align: true
+    max_correction_durations: 0.5
+    alignment_window_durations: 1.0
+    deduplicate: true
+    phase_min: -0.5
+    phase_max: 0.5
+
+global_view:
+  name: global
+  params:
+    n_bins: 2001
+    phase_min: -0.5
+    phase_max: 0.5
+    statistic: median
+    interpolation: linear
+    normalization: astronet
+    max_empty_fraction: 0.5
+
+local_view:
+  name: local
+  params:
+    n_bins: 401
+    window_durations: 2.0
+    statistic: median
+    interpolation: linear
+    normalization: astronet
+    max_empty_fraction: 0.5
+
+physics_features:
+  name: standard
+  params:
+    groups: [ephemeris, detection, shape, photometry, quality]
+    percentiles: [5, 25, 50, 75, 95]
+
+scaling:
+  name: robust
+  params:
+    log_features: [snr, power, neg_log_fap, log_snr]
+
+splitting:
+  name: star
+  params:
+    validation_fraction: 0.0
+    test_fraction: 0.2
+    seed: 42
+
+cache:
+  enabled: true
+  directory: null
+  compress: true
+  mmap: false
+
+augmentation:
+  enabled: false
+  copies: 1
+  steps:
+    - name: gaussian_noise
+      params:
+        sigma_fraction: 0.25
+    - name: timing_jitter
+      params:
+        max_jitter_durations: 0.1
+
+labeling:
+  meta_key: label
+  default_label: -1
+  label_weights:
+    0: 1.0
+    1: 1.0

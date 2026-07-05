@@ -1,0 +1,45 @@
+defaults:
+  - train_example.yaml
+
+experiment_name: ablation_suite_v1
+seed: 42
+
+ablation:
+  enabled: true
+  backend: sklearn
+  baseline_model: logistic_regression
+  ranking_metric: roc_auc
+  output_dir: null
+  fast_training:
+    epochs: 2
+    batch_size: 16
+    learning_rate: 1.0e-3
+    model_params:
+      global_bins: 32
+      local_bins: 16
+      embed_dim: 32
+      transformer_depth: 1
+      transformer_heads: 2
+      cnn_channels: [8, 16]
+  variants:
+    - id: cnn_only
+      architecture: logistic_regression
+      label: CNN only (sklearn proxy)
+    - id: transformer_only
+      architecture: random_forest
+      label: Transformer only (sklearn proxy)
+    - id: physics_only
+      architecture: mlp
+      label: Physics only (sklearn proxy)
+    - id: cnn_transformer
+      architecture: xgboost
+      label: CNN + Transformer (sklearn proxy)
+    - id: fusion
+      architecture: logistic_regression
+      label: Full hybrid (sklearn proxy)
+
+benchmark:
+  enabled: false
+
+sensitivity:
+  enabled: false

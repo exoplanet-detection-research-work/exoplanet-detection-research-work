@@ -1,0 +1,61 @@
+defaults:
+  - base.yaml
+
+experiment_name: xgboost_tess_v1
+seed: 42
+
+model:
+  architecture:
+    name: xgboost
+    params:
+      n_estimators: 200
+      max_depth: 4
+      learning_rate: 0.05
+
+training:
+  trainer:
+    name: supervised
+    params:
+      backend: sklearn
+      use_views: both
+      loss:
+        name: bce
+        params: {}
+      optimizer:
+        name: adamw
+        params: {}
+      amp: none
+      checkpoint:
+        monitor: val_loss
+        mode: min
+        save_best: true
+        save_last: true
+        top_k: 1
+      callbacks: []
+      tracking:
+        enabled: true
+        backends:
+          - csv
+      cross_validation:
+        enabled: false
+        strategy: group_kfold
+        n_splits: 5
+  epochs: 1
+  batch_size: 64
+  learning_rate: 1.0e-3
+  early_stopping_patience: 0
+
+evaluation:
+  metrics:
+    - name: accuracy
+      params: {}
+    - name: roc_auc
+      params: {}
+    - name: pr_auc
+      params: {}
+    - name: f1
+      params: {}
+    - name: calibration_error
+      params:
+        n_bins: 10
+  decision_threshold: 0.5

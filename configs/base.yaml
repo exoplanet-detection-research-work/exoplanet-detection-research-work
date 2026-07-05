@@ -1,0 +1,53 @@
+# Shared defaults inherited by every experiment via the `defaults` key.
+# Experiment configs override only what differs.
+
+experiment_name: base  # overridden by every concrete experiment
+seed: 42
+
+paths:
+  data_dir: data
+  raw_dir: data/raw
+  interim_dir: data/interim
+  processed_dir: data/processed
+  output_dir: outputs
+  checkpoint_dir: outputs/checkpoints
+  figure_dir: outputs/figures
+  log_dir: outputs/logs
+  report_dir: outputs/reports
+
+logging:
+  level: INFO
+  to_file: true
+
+data:
+  source:
+    name: kepler_koi_archive        # to be implemented and registered
+    params: {}
+  dataset:
+    name: kepler_lightcurves        # to be implemented and registered
+    params: {}
+  train_fraction: 0.7
+  val_fraction: 0.15
+  stratify: true
+
+preprocessing:
+  steps: []                          # populated by concrete experiments
+
+model:
+  architecture:
+    name: placeholder                # to be implemented and registered
+    params: {}
+  features: []
+
+training:
+  trainer:
+    name: placeholder                # to be implemented and registered
+    params: {}
+  epochs: 50
+  batch_size: 64
+  learning_rate: 1.0e-3
+  early_stopping_patience: 10
+
+evaluation:
+  metrics: []
+  decision_threshold: 0.5

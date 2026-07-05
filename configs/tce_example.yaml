@@ -1,0 +1,80 @@
+# Configuration of the Transit Candidate Event (BLS) search stage.
+# Run with:  exodet tce -c configs/tce_example.yaml
+# Input: processed light curves written by `exodet preprocess`.
+
+experiment_name: tce_search_v1
+seed: 42
+
+paths:
+  processed_dir: data/processed
+  figure_dir: outputs/figures
+  log_dir: outputs/logs
+  report_dir: outputs/reports
+
+logging:
+  level: INFO
+  to_file: true
+
+input_pattern: "*.npz"
+n_figure_targets: 1
+
+grid:
+  name: bls_auto
+  params:
+    min_period_days: 0.5
+    max_period_days: null      # auto: baseline / min_n_transits
+    oversample: 3.0            # frequency oversampling (>= 1)
+    min_duration_days: 0.02
+    max_duration_days: 0.3
+    n_durations: 5
+    min_n_transits: 2
+
+search:
+  name: astropy_bls
+  params:
+    objective: snr             # snr | likelihood
+    phase_oversample: 10
+    use_flux_err: true
+
+peaks:
+  name: prominence
+  params:
+    threshold_sigma: 5.0       # adaptive: median + N robust sigma
+    detrend_window_fraction: 0.02    # continuum removal before thresholding
+    min_prominence_sigma: 1.0
+    min_frequency_separation: null   # null -> 0.25 / baseline
+    max_candidates: 5
+
+detection_metrics:
+  name: standard
+  params:
+    robust_sde: true
+    detrend_window_fraction: 0.02   # running-median continuum removal
+    compute_fap: true
+    odd_even_sigma: 3.0
+
+validation:
+  name: physical
+  params:
+    min_n_transits: 2
+    min_coverage: 0.5
+    max_duration_ratio: 0.2
+    min_depth: 0.0
+    max_depth: 0.5
+    min_sde: 7.0
+    min_snr: 5.0
+
+harmonics:
+  name: period_ratio
+  params:
+    tolerance: 0.01
+    max_multiple: 5
+    metric: power
+
+ranking:
+  name: composite              # metric | composite
+  params:
+    weights:
+      snr: 0.4
+      sde: 0.4
+      power: 0.2

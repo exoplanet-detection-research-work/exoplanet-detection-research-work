@@ -1,0 +1,24 @@
+{
+  "amp": "none",
+  "backend": "torch",
+  "batch_size": 8,
+  "early_stopping_patience": 5,
+  "epochs": 2,
+  "experiment_name": "training",
+  "git_commit": null,
+  "learning_rate": 0.01,
+  "library_versions": {
+    "numpy": "2.4.6",
+    "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+    "python": "3.14.6",
+    "scipy": "1.18.0",
+    "sklearn": "1.9.0",
+    "torch": "2.12.1",
+    "xgboost": "not installed"
+  },
+  "loss": "bce",
+  "optimizer": "adamw",
+  "scheduler": "cosine",
+  "trainer": "SupervisedTrainer",
+  "use_views": "both"
+}

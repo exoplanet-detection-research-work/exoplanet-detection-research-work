@@ -1,0 +1,86 @@
+defaults:
+  - base.yaml
+
+experiment_name: inference_demo
+
+model:
+  architecture:
+    name: fusion
+    params:
+      global_bins: 64
+      local_bins: 32
+      embed_dim: 32
+      hidden_dim: 64
+      cnn_channels: [16, 32]
+      cnn_kernel_sizes: [5, 3]
+      transformer_depth: 2
+      transformer_heads: 2
+      physics_hidden_dims: [32]
+      num_classes: 5
+
+training:
+  trainer:
+    name: supervised
+    params:
+      use_views: both
+      amp: none
+  epochs: 1
+  batch_size: 16
+  learning_rate: 1.0e-3
+  early_stopping_patience: 0
+
+evaluation:
+  metrics:
+    - name: accuracy
+      params: {}
+  decision_threshold: 0.5
+
+inference:
+  enabled: true
+  device: auto
+  amp: none
+  batch_size: 16
+  use_views: both
+  input_dataset: test
+  parameter_fit:
+    # least_squares | robust — robust preferred for noisy phase bins
+    method: least_squares
+    loss: soft_l1          # linear | soft_l1 | huber | cauchy
+    bootstrap_samples: 20  # 0 disables; range 0–500
+    seed: 42               # reproducible bootstrap resampling
+  physical:
+    default_albedo: 0.3    # Bond albedo for T_eq; range [0, 1)
+  uncertainty:
+    method: none           # none | mc_dropout | bootstrap
+    n_samples: 20          # MC/bootstrap draws; range 1–500
+    credible_alpha: 0.68   # central credible interval (~1 sigma)
+    seed: 42
+  explainability:
+    enabled: true
+    methods: [grad_cam, integrated_gradients, attention, occlusion, feature_attribution]
+    dpi: 120
+  false_positive: {}
+  benchmark:
+    enabled: false
+  output_name: scientific_inference
+
+report:
+  enabled: true
+  formats: [json, pdf, csv]
+  include_explainability: true
+  include_transit_fit: true
+  include_uncertainty: true
+  top_n: 0
+  probability_threshold: 0.0
+  figure_dpi: 120
+
+catalog:
+  enabled: true
+  output_name: exoplanet_catalog
+  formats: [csv, json]
+  sort_by: confidence
+  descending: true
+  min_confidence: 0.0
+
+compare:
+  models: {}

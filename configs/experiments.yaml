@@ -1,0 +1,62 @@
+defaults:
+  - train_example.yaml
+
+experiment_name: experiment_campaign_v1
+seed: 42
+
+experiments:
+  enabled: true
+  database_path: null
+  output_dir: null
+  tags:
+    - campaign
+    - v1
+  template: sklearn_baseline
+  parent_id: null
+  inherit_config: true
+  stage: train
+  auto_register: true
+  metadata:
+    description: "Example experiment orchestration campaign"
+
+sweep:
+  enabled: false
+  method: grid
+  model_name: logistic_regression
+  ranking_metric: roc_auc
+  max_trials: 0
+  random_samples: 20
+  resume: true
+  parameters:
+    C: [0.1, 1.0, 10.0]
+    max_iter: [200, 500]
+  optuna:
+    direction: maximize
+  pbt:
+    population_size: 8
+
+artifacts:
+  enabled: true
+  organize: true
+  cleanup:
+    enabled: false
+    max_age_days: 30
+    keep_status:
+      - completed
+    max_total_bytes: 0
+
+reproduce:
+  enabled: false
+  experiment_ids: []
+  metric_tolerance: 1.0e-4
+  probability_tolerance: 1.0e-5
+  issue_certificate: true
+
+benchmark:
+  enabled: false
+
+sensitivity:
+  enabled: false
+
+ablation:
+  enabled: false

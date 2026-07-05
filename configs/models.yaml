@@ -1,0 +1,98 @@
+# Neural network architecture defaults for exoplanet classification.
+# Reference these blocks from experiment configs via model.architecture.params.
+
+fusion:
+  branch_mode: fusion
+  global_bins: 2001
+  local_bins: 401
+  embed_dim: 128
+  hidden_dim: 256
+  cnn_channels: [32, 64, 128]
+  cnn_kernel_sizes: [7, 5, 3]
+  cnn_depthwise_stages: [1, 2]
+  cnn_dropout: 0.1
+  transformer_depth: 4
+  transformer_heads: 4
+  transformer_dropout: 0.1
+  transformer_checkpoint: true
+  physics_hidden_dims: [128, 64]
+  physics_dropout: 0.1
+  fusion_strategy: cross_attention
+  fusion_heads: 4
+  fusion_dropout: 0.1
+  num_classes: 5
+  classifier_dropout: 0.2
+  confidence_hidden_dim: 64
+  activation: gelu
+  compile_model: false
+  trainer_output: binary_transit
+
+cnn_transformer:
+  branch_mode: cnn_transformer
+  global_bins: 2001
+  local_bins: 401
+  embed_dim: 128
+  hidden_dim: 256
+  cnn_channels: [32, 64, 128]
+  cnn_kernel_sizes: [7, 5, 3]
+  transformer_depth: 4
+  transformer_heads: 4
+  num_classes: 5
+  fusion_strategy: cross_attention
+  trainer_output: binary_transit
+
+cnn_only:
+  branch_mode: cnn_only
+  local_bins: 401
+  embed_dim: 128
+  cnn_channels: [32, 64, 128]
+  cnn_kernel_sizes: [7, 5, 3]
+  num_classes: 5
+  trainer_output: binary_transit
+
+cnn:
+  branch_mode: cnn
+  local_bins: 401
+  embed_dim: 96
+  cnn_channels: [24, 48, 96]
+  cnn_kernel_sizes: [9, 7, 5]
+  num_classes: 5
+
+transformer_only:
+  branch_mode: transformer_only
+  global_bins: 2001
+  embed_dim: 128
+  hidden_dim: 256
+  transformer_depth: 6
+  transformer_heads: 4
+  num_classes: 5
+  trainer_output: binary_transit
+
+transformer:
+  branch_mode: transformer
+  global_bins: 2001
+  embed_dim: 128
+  transformer_depth: 4
+  transformer_heads: 4
+  num_classes: 5
+
+physics_only:
+  branch_mode: physics_only
+  embed_dim: 64
+  physics_hidden_dims: [128, 64]
+  physics_dropout: 0.15
+  num_classes: 5
+  trainer_output: binary_transit
+
+# Reduced bin counts for fast benchmarking / CI (override in experiment YAML).
+benchmark:
+  global_bins: 128
+  local_bins: 64
+  embed_dim: 64
+  hidden_dim: 128
+  cnn_channels: [16, 32]
+  cnn_kernel_sizes: [5, 3]
+  transformer_depth: 2
+  transformer_heads: 2
+  physics_hidden_dims: [32]
+  num_classes: 5

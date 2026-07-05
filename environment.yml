@@ -1,0 +1,26 @@
+name: exodet
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy>=1.26
+  - scipy>=1.11
+  - pandas>=2.1
+  - matplotlib>=3.8
+  - pyyaml>=6.0
+  - astropy>=6.0
+  - scikit-learn>=1.3
+  - statsmodels>=0.14
+  - tqdm>=4.66
+  # Dev tooling
+  - pytest>=7.4
+  - pytest-cov>=4.1
+  - ruff>=0.4
+  - black>=24.0
+  - mypy>=1.8
+  - pre-commit>=3.6
+  - pip
+  - pip:
+      - lightkurve>=2.4
+      - wotan>=1.10
+      - -e .

@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+*.egg
+
+# Environments
+.venv/
+venv/
+env/
+.conda/
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Data: raw/interim/processed artifacts are never committed
+data/raw/*
+data/interim/*
+data/processed/*
+data/external/*
+!data/**/.gitkeep
+
+# Run outputs
+outputs/checkpoints/*
+outputs/figures/*
+outputs/logs/*
+outputs/reports/*
+!outputs/**/.gitkeep
+
+# Secrets
+.env
+*.key

@@ -1,0 +1,22 @@
+defaults:
+  - inference.yaml
+
+experiment_name: report_demo
+
+report:
+  enabled: true
+  formats: [json, pdf, csv]
+  include_explainability: true
+  include_transit_fit: true
+  include_uncertainty: true
+  top_n: 10
+  probability_threshold: 0.1
+  figure_dpi: 150
+
+catalog:
+  enabled: true
+  output_name: publication_catalog
+  formats: [csv, json, parquet]
+  sort_by: probability
+  descending: true
+  min_confidence: 0.2

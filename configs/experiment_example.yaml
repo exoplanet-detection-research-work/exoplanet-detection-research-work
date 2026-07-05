@@ -1,0 +1,70 @@
+# Example experiment: overrides configs/base.yaml.
+# Component names below are illustrative; each must be implemented and
+# registered before this experiment can run end to end.
+
+defaults:
+  - base.yaml
+
+experiment_name: cnn_tess_v1
+seed: 42
+
+preprocessing:
+  steps:
+    - name: quality_filter
+      params:
+        bitmask: default        # or "hard", "hardest", or an integer
+    - name: nan_removal
+      params:
+        strategy: drop          # drop | fill_median | fill_interpolate
+    - name: sector_stitch
+      params: {}
+    - name: gap_detect
+      params:
+        factor: 5.0             # gap threshold = factor x median cadence
+    - name: gap_interpolate
+      params:
+        method: linear          # linear | spline | none
+        max_gap_days: 0.5       # never bridge downlink-scale gaps
+    - name: wotan_detrend
+      params:
+        method: biweight        # biweight | median | lowess
+        window_length_days: 0.5
+        break_tolerance_days: 0.5
+    - name: sigma_clip
+      params:
+        sigma: 5.0
+        max_iterations: 10
+        clip_lower: false       # protect deep transits
+    - name: normalize
+      params:
+        method: median          # minmax | median | zscore
+    - name: quality_metrics
+      params:
+        cdpp_duration_hours: 1.0
+
+model:
+  architecture:
+    name: cnn_1d
+    params:
+      n_filters: [16, 32, 64]
+      kernel_size: 5
+      dropout: 0.3
+
+training:
+  trainer:
+    name: torch_trainer
+    params: {}
+  epochs: 100
+  batch_size: 128
+  learning_rate: 5.0e-4
+
+evaluation:
+  metrics:
+    - name: roc_auc
+      params: {}
+    - name: average_precision
+      params: {}
+    - name: recall_at_precision
+      params:
+        precision: 0.9
+  decision_threshold: 0.5
