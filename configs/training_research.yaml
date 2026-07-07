@@ -8,8 +8,8 @@ model:
   architecture:
     name: fusion
     params:
-      global_bins: 128
-      local_bins: 64
+      global_bins: 2001
+      local_bins: 401
       embed_dim: 64
       hidden_dim: 128
       cnn_channels: [16, 32]
@@ -54,7 +54,7 @@ training:
             decay: 0.999
       tracking:
         enabled: true
-        backends: [csv]
+        backends: [csv, tensorboard]
       research:
         enabled: true
         curriculum:
@@ -106,10 +106,10 @@ training:
                 max_scale: 0.08
             - name: cadence_mask
               params:
-                max_fraction: 0.05
+                max_mask_fraction: 0.05
             - name: timing_jitter
               params:
-                max_fraction_of_duration: 0.05
+                max_jitter_durations: 0.05
         hard_mining:
           enabled: true
           boost: 2.0

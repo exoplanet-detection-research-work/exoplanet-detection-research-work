@@ -18,7 +18,7 @@ logging:
   to_file: true
 
 candidates_file: tce_candidates.json
-accepted_only: true
+accepted_only: false
 n_figure_samples: 1
 
 folding:

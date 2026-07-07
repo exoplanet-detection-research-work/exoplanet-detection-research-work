@@ -393,7 +393,6 @@ def _run_predict(args: argparse.Namespace) -> int:
 
 def _run_infer(args: argparse.Namespace) -> int:
     """Runs scientific inference on dataset splits."""
-    _prepare(args)
     from exodet.inference.runner import run_inference
 
     batch = run_inference(args.config, overrides=args.override)
@@ -403,7 +402,6 @@ def _run_infer(args: argparse.Namespace) -> int:
 
 def _run_report(args: argparse.Namespace) -> int:
     """Generates publication-quality candidate reports."""
-    _prepare(args)
     from exodet.reporting.runner import run_report_generation
 
     out_dir = run_report_generation(args.config, overrides=args.override)

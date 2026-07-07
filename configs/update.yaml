@@ -26,7 +26,7 @@ preprocessing:
     - name: gap_interpolate
       params:
         method: linear
-        max_gap_days: 0.5
+        max_gap_days: 0.05
     - name: wotan_detrend
       params:
         method: biweight
@@ -54,7 +54,7 @@ data:
 update:
   enabled: true
   tic_ids: []
-  missions: [TESS, Kepler, K2]
+  missions: [TESS]
   parallel_workers: 4
   force_reprocess: false
   append_split: train
@@ -63,8 +63,9 @@ update:
   resume_strategy: continuation
   experiment_mode: child
   download:
-    backend: auto
+    backend: lightkurve   # do not use auto — it silently falls back to synthetic
     flux_column: pdcsap_flux
+    author: SPOC          # 2-min pipeline only; HLSP/QLP lack pdcsap_flux
     quality_bitmask: default
   checkpoint:
     selection: latest
@@ -99,3 +100,11 @@ splitting:
 cache:
   enabled: true
   compress: true
+
+# TCE grid cap for multi-year TESS baselines (avoids 2B-frequency grids).
+grid:
+  name: bls_auto
+  params:
+    n_frequencies: 50000
+    min_period_days: 0.5
+    oversample: 3.0

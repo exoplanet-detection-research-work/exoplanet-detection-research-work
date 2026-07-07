@@ -233,7 +233,9 @@ def _download_single_tic(
                 return curves[0]
         except Exception as exc:
             last_error = exc
-            logger.debug("Mission %s failed for TIC %s: %s", mission, tic_id, exc)
+            logger.warning(
+                "Mission %s failed for TIC %s: %s", mission, tic_id, exc
+            )
     if last_error is not None:
         raise last_error
     raise PipelineError(f"No mission succeeded for TIC {tic_id}")
@@ -258,7 +260,11 @@ def _download_with_lightkurve(
         search_id = int(DatasetRegistry.normalize_tic_id(tic))
         logger.info("Searching %s for TIC %s ...", mission, target_id)
         if mission == "TESS":
-            search = lk.search_lightcurve(f"TIC {search_id}", mission="TESS")
+            search_kwargs: dict[str, Any] = {"mission": "TESS"}
+            author = params.get("author")
+            if author:
+                search_kwargs["author"] = str(author)
+            search = lk.search_lightcurve(f"TIC {search_id}", **search_kwargs)
         elif mission in ("KEPLER", "K2"):
             search = lk.search_lightcurve(search_id, mission=mission)
         else:
@@ -273,39 +279,76 @@ def _download_with_lightkurve(
             mission,
             target_id,
         )
-        collection = search.download_all(
-            flux_column=flux_column,
-            quality_bitmask=quality_bitmask,
-        )
-        if collection is None:
-            raise DataError(f"Download returned no data for TIC {tic}.")
+        times: list[np.ndarray] = []
+        fluxes: list[np.ndarray] = []
+        flux_errs: list[np.ndarray] = []
+        qualities: list[np.ndarray] = []
+        sectors: list[np.ndarray] = []
+        n_failed = 0
+        for index in range(len(search)):
+            try:
+                slc = search[index].download(
+                    flux_column=flux_column,
+                    quality_bitmask=quality_bitmask,
+                )
+            except Exception as exc:
+                n_failed += 1
+                logger.warning(
+                    "Skipping unavailable %s sector file %d/%d for %s: %s",
+                    mission,
+                    index + 1,
+                    len(search),
+                    target_id,
+                    exc,
+                )
+                continue
+            sector_num = int(getattr(slc, "sector", index + 1) or (index + 1))
+            t = np.asarray(slc.time.value, dtype=np.float64)
+            f = np.asarray(slc.flux.value, dtype=np.float64)
+            n = len(t)
+            if n == 0:
+                continue
+            times.append(t)
+            fluxes.append(f)
+            sectors.append(np.full(n, sector_num, dtype=np.int64))
+            err = getattr(slc, "flux_err", None)
+            if err is not None:
+                flux_errs.append(np.asarray(err.value, dtype=np.float64))
+            qual = getattr(slc, "quality", None)
+            if qual is not None:
+                qualities.append(np.asarray(qual, dtype=np.int64))
 
-        logger.info("Stitching %d sector(s) for %s ...", len(search), target_id)
-        if hasattr(collection, "stitch"):
-            lc = collection.stitch()
-        else:
-            lc = collection[0] if hasattr(collection, "__getitem__") else collection
+        if not times:
+            raise DataError(
+                f"All {len(search)} {mission} downloads failed for TIC {tic} "
+                f"({n_failed} error(s))."
+            )
+        if n_failed:
+            logger.warning(
+                "Downloaded %d/%d sector file(s) for %s (%d unavailable on MAST).",
+                len(times),
+                len(search),
+                target_id,
+                n_failed,
+            )
 
-        time = np.asarray(lc.time.value, dtype=np.float64)
-        flux = np.asarray(lc.flux.value, dtype=np.float64)
-        flux_err = getattr(lc, "flux_err", None)
-        flux_err_arr = (
-            np.asarray(flux_err.value, dtype=np.float64) if flux_err is not None else None
-        )
-        quality = None
-        if hasattr(lc, "quality") and lc.quality is not None:
-            quality = np.asarray(lc.quality, dtype=np.int64)
+        time = np.concatenate(times)
+        flux = np.concatenate(fluxes)
+        flux_err_arr = np.concatenate(flux_errs) if flux_errs else None
+        if flux_err_arr is not None and len(flux_err_arr) != len(time):
+            flux_err_arr = None
 
         meta: dict[str, Any] = {
             "mission": mission.lower(),
             "flux_column": flux_column,
             "quality_bitmask": quality_bitmask,
             "download_date": datetime.now(UTC).isoformat(),
+            "sector": np.concatenate(sectors),
+            "n_sectors_downloaded": len(times),
+            "n_sectors_requested": len(search),
         }
-        if quality is not None:
-            meta["quality"] = quality
-        if hasattr(lc, "sector") and lc.sector is not None:
-            meta["sector"] = np.atleast_1d(np.asarray(lc.sector))
+        if qualities and sum(len(q) for q in qualities) == len(time):
+            meta["quality"] = np.concatenate(qualities)
 
         curve = LightCurve(
             target_id=target_id,
@@ -322,7 +365,7 @@ def _download_with_lightkurve(
             "Downloaded %s: %d cadences across %d sector(s).",
             target_id,
             len(curve.time),
-            len(search),
+            len(times),
         )
         curves.append(curve)
     return curves

@@ -1,0 +1,183 @@
+================================================================================
+EXODET — CO-RESEARCHER SETUP & ARTIFACT GUIDE
+================================================================================
+Read this BEFORE running any commands. It prevents the most common confusion:
+"training succeeded in 0.06s but outputs/ looks empty."
+
+================================================================================
+1. WHAT IS IN GIT vs WHAT YOU GENERATE LOCALLY
+================================================================================
+
+COMMITTED (clone gives you these):
+  - All Python source: src/exodet/
+  - All configs: configs/
+  - All tests: tests/
+  - TIC target catalogs: data/tic_training_catalog.csv, data/tics_*.csv
+  - Documentation: docs/EXODET_RESEARCH_GUIDE.txt (full science+ML guide)
+  - Scripts: scripts/
+
+NOT IN GIT (you must generate by running the pipeline):
+  - data/raw/*.npz              — downloaded TESS light curves
+  - data/processed/*.npz        — preprocessed curves
+  - data/processed/dataset/     — train.npz, validation.npz, test.npz
+  - outputs/checkpoints/        — model weights (.pt or .joblib)
+  - outputs/reports/            — TCE catalogs, evaluation JSON
+  - outputs/logs/               — per-run log files
+  - outputs/figures/            — diagnostic plots
+
+This is intentional: binary data and run outputs are large and machine-specific.
+
+================================================================================
+2. THE #1 ARTIFACT CONFUSION (SHADOW TEST)
+================================================================================
+
+SYMPTOM:
+  exodet train prints "Training complete" in ~0.06s
+  ls outputs/checkpoints/     → looks empty (only .gitkeep)
+  Conclusion: "training is fake / no artifacts"
+
+REALITY:
+  Artifacts are in a SUBDIRECTORY named after the experiment:
+
+  sklearn backend (logistic_regression):
+    outputs/checkpoints/exodet_incremental_v1/model.joblib
+    outputs/checkpoints/exodet_incremental_v1/model.json
+    outputs/checkpoints/exodet_incremental_v1/training_report.json
+
+  PyTorch fusion backend (training_research.yaml):
+    outputs/checkpoints/fusion_research_v1/last.pt
+    outputs/checkpoints/fusion_research_v1/best.pt
+    outputs/checkpoints/fusion_research_v1/ema.pt
+    outputs/checkpoints/fusion_research_v1/swa.pt
+    outputs/checkpoints/fusion_research_v1/training_report.json
+    outputs/checkpoints/fusion_research_v1/metrics.csv
+    outputs/checkpoints/fusion_research_v1/tensorboard/
+
+  The CLI prints the PARENT directory (outputs/checkpoints), not the file path.
+
+VERIFY AFTER TRAINING:
+  ls -la outputs/checkpoints/<experiment_name>/
+
+================================================================================
+3. INSTALLATION
+================================================================================
+
+  git clone https://github.com/exoplanet-detection-research-work/exoplanet-detection-research-work.git
+  cd exoplanet-detection-research-work
+  python3 -m venv .venv
+  source .venv/bin/activate
+  pip install -e ".[dev]"
+
+  # Required for real TESS downloads:
+  pip install lightkurve astropy
+
+  # Verify install:
+  exodet info
+  pytest -q
+
+================================================================================
+4. REPRODUCE THE REAL-DATA E2E RUN (from committed CSV catalogs)
+================================================================================
+
+STEP 0 — Clear any stale local state from prior experiments:
+  rm -f data/processed/dataset/train.npz data/processed/dataset/train.json
+  rm -f data/processed/dataset/validation.npz data/processed/dataset/test.npz
+  rm -f data/processed/dataset/manifest.json data/processed/dataset/feature_scaler.json
+  rm -f data/processed/dataset_registry.json
+  rm -rf data/interim/update_state
+
+  # If lightkurve downloads fail with corrupt cache errors:
+  rm -rf ~/.cache/lightkurve/mastDownload
+
+STEP 1 — Ingest POSITIVE TICs (label=1):
+  exodet update -c configs/update.yaml \
+    --tic-file data/tics_positive.csv \
+    -o labeling.default_label=1 \
+    -o update.resume_training=false \
+    -o update.evaluation.enabled=false \
+    -o update.force_reprocess=true
+
+  Expect: 30–60+ minutes (real MAST downloads + BLS on long baselines).
+
+STEP 2 — Ingest NEGATIVE TICs (label=0):
+  exodet update -c configs/update.yaml \
+    --tic-file data/tics_negative.csv \
+    -o labeling.default_label=0 \
+    -o update.resume_training=false \
+    -o update.evaluation.enabled=false
+
+  Note: TIC 400799224 has no SPOC TESS data on MAST (expected failure).
+
+STEP 3 — Verify dataset:
+  python -c "
+  from exodet.representation.containers import RepresentationDataset
+  d = RepresentationDataset.load('data/processed/dataset/train.npz')
+  print('samples:', len(d), 'labels:', sorted(s.label for s in d.samples))
+  "
+
+  Expect: ~40 samples, labels [0, 1] mixed.
+
+STEP 4 — Train fusion model:
+  exodet train -c configs/training_research.yaml \
+    -o training.epochs=15 \
+    -o training.batch_size=4 \
+    -o training.trainer.params.research.augmentation.enabled=false \
+    -o training.trainer.params.research.imbalance.enabled=false \
+    -o training.trainer.params.research.curriculum.enabled=false
+
+  Verify: ls outputs/checkpoints/fusion_research_v1/
+
+STEP 5 — Evaluate:
+  cp outputs/checkpoints/fusion_research_v1/last.pt \
+     outputs/checkpoints/fusion_research_v1/best.pt
+  exodet evaluate -c configs/training_research.yaml
+
+STEP 6 — Inference + reports:
+  exodet infer -c configs/report.yaml -o inference.explainability.enabled=false
+  exodet report -c configs/report.yaml \
+    -o inference.explainability.enabled=false \
+    -o report.include_explainability=false
+
+================================================================================
+5. FAST SANITY CHECK (sklearn, seconds not hours)
+================================================================================
+
+After Step 1+2 above, or with any labeled dataset in train.npz:
+
+  exodet train -c configs/update.yaml \
+    -o model.architecture.name=logistic_regression \
+    -o training.trainer.params.backend=sklearn \
+    -o training.trainer.params.use_views=features_only
+
+  Artifacts: outputs/checkpoints/exodet_incremental_v1/model.joblib
+  NOT best.pt (that is PyTorch only).
+
+================================================================================
+6. KEY CONFIG FILES (what each is for)
+================================================================================
+
+  configs/update.yaml           — full incremental ingest (download→TCE→dataset)
+  configs/tce_example.yaml      — standalone BLS search
+  configs/representation_example.yaml — standalone dataset build
+  configs/training_research.yaml  — fusion CNN+Transformer training
+  configs/report.yaml             — inference + scientific reports
+
+================================================================================
+7. LABELING RULE
+================================================================================
+
+The CSV label column is NOT auto-read. Use two update runs:
+  - data/tics_positive.csv with -o labeling.default_label=1
+  - data/tics_negative.csv with -o labeling.default_label=0
+
+See data/tic_training_catalog.csv for full target list and science notes.
+
+================================================================================
+8. WHERE TO READ MORE
+================================================================================
+
+  docs/EXODET_RESEARCH_GUIDE.txt  — complete pipeline + model math (1000+ lines)
+  docs/incremental_training.md    — update pipeline API
+  docs/dataset_versioning.md      — dataset registry semantics
+
+================================================================================

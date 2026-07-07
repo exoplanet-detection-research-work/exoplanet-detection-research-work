@@ -1,0 +1,11 @@
+tic_id,label,class,reason
+25155310,1,confirmed_planet,WASP-126 c (Confirmed Planet)
+100990000,1,confirmed_planet,HD 22946 multi-planet system
+172900988,1,confirmed_planet,TIC 172900988 b Circumbinary Planet
+38467100,1,confirmed_planet_candidate,TOI 2310.01 Strong Transit Candidate
+261136679,1,confirmed_planet,Validated planetary system
+55497281,0,instrumental_systematic,Instrumental step-like systematic
+5092088,0,stellar_variability,Poor detrending / stellar variability
+326919774,0,false_positive,Background eclipsing binary (TOI 1552)
+209409435,0,eclipsing_triple,Triply eclipsing triple star
+400799224,0,dust_occultation,Variable dusty occultation event

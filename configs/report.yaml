@@ -1,7 +1,7 @@
 defaults:
-  - inference.yaml
+  - training_research.yaml
 
-experiment_name: report_demo
+experiment_name: fusion_research_v1
 
 report:
   enabled: true

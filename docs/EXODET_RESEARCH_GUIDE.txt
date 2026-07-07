@@ -1,0 +1,1009 @@
+================================================================================
+EXODET — COMPLETE RESEARCH GUIDE
+================================================================================
+A end-to-end explanation of the exoplanet detection machine-learning pipeline
+built in this repository, written for a reader who knows basic Python but has
+not studied machine learning formally. Mathematical detail is included where it
+matters for understanding the models and the science.
+
+Last updated: 2026-07-07
+Repository: ExoDet (Exoplanet Detection from Photometric Light Curves)
+Mission data used in our live run: NASA TESS (Transiting Exoplanet Survey
+Satellite), SPOC 2-minute cadence, PDCSAP flux.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+  1.  What problem are we solving?
+  2.  Astronomical background you need
+  3.  What ExoDet is (architecture of the software)
+  4.  Our research dataset (the 10 TIC targets)
+  5.  The full pipeline — stage by stage
+      5.1  Data download (lightkurve / MAST)
+      5.2  Preprocessing (9 steps)
+      5.3  Transit Candidate Event (TCE) search — Box Least Squares
+      5.4  Representation layer — views and physics features
+      5.5  Dataset assembly, scaling, and splitting
+  6.  Machine learning fundamentals (minimal but precise)
+  7.  Models implemented in ExoDet
+      7.1  Logistic Regression (sklearn baseline)
+      7.2  XGBoost (gradient-boosted trees)
+      7.3  The Fusion neural network (CNN + Transformer + Physics)
+           7.3.1  Local CNN branch
+           7.3.2  Global Transformer branch
+           7.3.3  Physics feature MLP encoder
+           7.3.4  Cross-attention fusion
+           7.3.5  Classification and confidence heads
+  8.  Training systems
+      8.1  Sklearn backend (fast baselines)
+      8.2  PyTorch backend (neural models)
+      8.3  Research trainer (curriculum, EMA, SWA, hard mining, …)
+      8.4  Loss functions, optimizers, schedulers
+      8.5  Checkpointing and experiment tracking
+  9.  Evaluation and scientific inference
+ 10.  What we actually ran (concrete results from the live E2E session)
+ 11.  Output files and where to find them
+ 12.  Known limitations and honest caveats
+ 13.  Command reference
+ 14.  Glossary
+
+================================================================================
+1. WHAT PROBLEM ARE WE SOLVING?
+================================================================================
+
+We want to automatically decide whether a periodic dip in a star's brightness
+(a "light curve") is caused by:
+
+  (A) a planet passing in front of the star (a TRANSIT — what we want), or
+  (B) something else that mimics a transit (a FALSE POSITIVE).
+
+Examples of false positives:
+  - An eclipsing binary star in the background (two stars orbiting each other)
+  - Stellar variability (the star itself pulses or rotates with spots)
+  - Instrumental systematics (satellite electronics, momentum dumps, etc.)
+  - Dust clouds passing in front of the star
+
+The classical approach is:
+  1. Download years of brightness measurements from a space telescope.
+  2. Clean and detrend the data.
+  3. Search for periodic box-shaped dips (Box Least Squares algorithm).
+  4. Vet each candidate with physics checks and machine learning.
+  5. Report ranked planet candidates.
+
+ExoDet implements steps 1–5 as a config-driven Python package with a single
+command-line tool (`exodet`) and YAML configuration files.
+
+Our research goal in the live run was:
+  - Use REAL TESS data (not synthetic).
+  - Build a labeled training set from 10 carefully chosen TIC targets
+    (5 known planets / strong candidates, 5 known false positives).
+  - Train a hybrid neural network (CNN + Transformer + physics features).
+  - Evaluate and generate scientific reports.
+
+================================================================================
+2. ASTRONOMICAL BACKGROUND YOU NEED
+================================================================================
+
+2.1  LIGHT CURVES
+-----------------
+A light curve is a time series: at each timestamp t_i we have a flux F_i
+(relative brightness). For TESS, cadence is typically 2 minutes (120 seconds)
+in short-cadence mode.
+
+A transit looks like a periodic rectangular dip:
+
+    Flux
+     ^
+     |  --------          --------          --------
+     |          \        /          \        /
+     |           --------            --------
+     +----------------------------------------> Time
+
+Key parameters of a transit:
+  - Period P (days): how often the planet orbits.
+  - Epoch t0: time of a reference transit center.
+  - Duration T (days): width of the dip.
+  - Depth δ: fractional decrease in flux (planet radius / star radius)^2
+    for a uniform star (approximate).
+
+2.2  TESS AND TIC IDs
+---------------------
+TESS (Transiting Exoplanet Survey Satellite) surveyed most of the sky in
+27-day "sectors." Each star has a TIC ID (Tess Input Catalog identifier),
+e.g. TIC 25155310.
+
+Data products:
+  - SAP flux: Simple Aperture Photometry (raw-ish)
+  - PDCSAP flux: Pre-search Data Conditioning SAP — systematics removed by
+    NASA pipeline. We use PDCSAP because it is the standard for planet search.
+
+2.3  PHASE FOLDING
+------------------
+Given a candidate period P and epoch t0, we map every timestamp to orbital
+phase:
+
+    φ = frac((t - t0) / P)
+
+where frac() wraps to [0, 1) or [-0.5, +0.5). All transits stack on top of
+each other, increasing signal-to-noise. This is essential before ML because
+the model sees a consistent "shape" regardless of which transit event it is.
+
+2.4  WHY FALSE POSITIVES DOMINATE
+---------------------------------
+Most periodic dips found by blind search are NOT planets. The ML classifier's
+job is to discriminate planet-like morphology + physics from impostors.
+
+================================================================================
+3. WHAT EXODET IS (ARCHITECTURE OF THE SOFTWARE)
+================================================================================
+
+ExoDet is organized as a PIPELINE of independent stages, each configured by
+YAML and invoked via CLI:
+
+    download / update  →  preprocess  →  tce  →  dataset  →  train
+                                                              ↓
+                                                         evaluate
+                                                              ↓
+                                                    infer / report
+
+Key design principles:
+  - REGISTRY PATTERN: components (preprocessors, models, metrics) register
+    themselves by name. YAML says `name: wotan_detrend` and the registry
+    instantiates the right class.
+  - IMMUTABLE DATA OBJECTS: `LightCurve`, `TransitCandidate`, `DatasetSample`
+    are dataclasses with provenance tracking (`history` lists every transform).
+  - CONFIG INHERITANCE: `configs/update.yaml` inherits from `base.yaml`,
+    `train_example.yaml`, etc. CLI overrides: `-o training.epochs=20`.
+  - REPRODUCIBILITY: global seed (`seed: 42`), logged git commit, saved
+    configs in checkpoint metadata.
+
+Package layout (src/exodet/):
+  cli/           — `exodet` command entrypoint
+  config/        — YAML loading, schema validation
+  data/          — LightCurve container, serialization (.npz)
+  preprocessing/ — 9-step cleaning pipeline
+  tce/           — BLS search, peak picking, validation, harmonics
+  representation/— phase fold, global/local views, physics features
+  models/        — CNN, Transformer, Fusion neural network
+  ml/            — training loop, checkpoints, metrics, inference engine
+  training/      — research trainer, augmentation, curriculum, EMA/SWA
+  inference/     — parameter fitting, uncertainty, explainability
+  reporting/     — candidate PDF/JSON reports
+  update/        — incremental dataset growth from TIC lists
+
+================================================================================
+4. OUR RESEARCH DATASET (THE 10 TIC TARGETS)
+================================================================================
+
+File: data/tic_training_catalog.csv
+
+POSITIVE CLASS (label = 1) — known or strong planet signals:
+  TIC 25155310   — WASP-126 c (confirmed planet)
+  TIC 100990000  — HD 22946 multi-planet system
+  TIC 172900988  — circumbinary planet candidate
+  TIC 38467100   — TOI 2310.01 (strong planet candidate)
+  TIC 261136679  — validated planetary system
+
+NEGATIVE CLASS (label = 0) — known false positives / astrophysical mimics:
+  TIC 55497281   — instrumental step-like systematic
+  TIC 5092088    — stellar variability / poor detrending
+  TIC 326919774  — background eclipsing binary (TOI 1552)
+  TIC 209409435  — triply eclipsing triple star
+  TIC 400799224  — dusty occultation event (FAILED download — no SPOC data)
+
+IMPORTANT LABELING DETAIL:
+The CSV `label` column is NOT read automatically by the pipeline. We split
+into two files and run `exodet update` twice:
+  - data/tics_positive.csv  with `-o labeling.default_label=1`
+  - data/tics_negative.csv  with `-o labeling.default_label=0`
+
+Each TIC can produce multiple ML samples (one per BLS peak candidate), so
+40 training samples came from 9 successful stars × ~5 candidates each.
+
+RESULT AFTER LIVE RUN:
+  - 9/10 stars processed with real TESS PDCSAP data
+  - 40 samples: 20 label-1, 20 label-0
+  - 8 unique stars represented (172900988 + 4 negatives in final train split)
+
+================================================================================
+5. THE FULL PIPELINE — STAGE BY STAGE
+================================================================================
+
+------------------------------------------------------------------------------
+5.1  DATA DOWNLOAD (lightkurve / MAST)
+------------------------------------------------------------------------------
+
+Command:
+  exodet update -c configs/update.yaml --tic-file data/tics_positive.csv ...
+
+What happens internally (src/exodet/update/sources.py):
+
+  1. For each TIC ID, lightkurve queries MAST (Mikulski Archive for Space
+     Telescopes) for TESS light curve files.
+  2. We filter to author=SPOC (official NASA pipeline products). This avoids
+     HLSP/QLP products that lack a `pdcsap_flux` column.
+  3. Each sector file is downloaded individually; corrupt/missing MAST files
+     (HTTP 404) are skipped rather than failing the whole star.
+  4. Sectors are concatenated in time order into one LightCurve object.
+  5. Per-cadence metadata stored:
+       - flux, flux_err, quality flags, sector number
+       - mission, flux_column=pdcsap_flux, download timestamp
+
+Performance choices made for real data:
+  - SPOC-only (56 files vs 220 for TIC 25155310)
+  - TESS-only missions list (no Kepler/K2 fallback attempts)
+  - No diagnostic figures during update (n_figure_targets=0)
+
+Output: raw curves saved under data/raw/tic_<id>.npz
+
+------------------------------------------------------------------------------
+5.2  PREPROCESSING (9 steps)
+------------------------------------------------------------------------------
+
+Configured in configs/update.yaml → preprocessing.steps:
+
+STEP 1: quality_filter (bitmask=default)
+  Removes cadences flagged by TESS quality bitmask (cosmic rays, gaps,
+  momentum dumps, etc.). In code: bitwise AND of quality flags against
+  TESS default mask (value 191 / 17087 depending on product).
+
+STEP 2: nan_removal (strategy=drop)
+  Drops cadences where flux is NaN or infinite.
+
+STEP 3: sector_stitch (SectorStitcher)
+  Multi-sector TESS light curves have different flux offsets per sector.
+  For each sector s, compute median flux m_s and divide: F' = F / m_s.
+  This removes arbitrary offsets while preserving transit depths.
+  Requires per-cadence sector array in metadata (built during download).
+
+STEP 4: gap_detect (factor=5.0)
+  Identifies gaps between consecutive cadences larger than 5× the median
+  cadence spacing.
+
+STEP 5: gap_interpolate (method=linear, max_gap_days=0.05)
+  Fills small gaps by linear interpolation. Gaps > 0.05 days are left empty.
+  (We tightened this from 0.5 days to avoid inflating cadence count 10× on
+  long baselines, which broke BLS grid generation.)
+
+STEP 6: wotan_detrend (method=biweight, window_length_days=0.5)
+  Wotan (Windowed OverTrending Analysis) removes slow stellar variability
+  and instrument drift using a robust moving filter (biweight mean).
+  A 0.5-day window preserves transit shapes (~hours) while removing
+  day-scale trends.
+
+STEP 7: sigma_clip (sigma=5.0, clip_lower=false)
+  Removes outliers above 5σ from the local robust dispersion estimate.
+  Does not clip downward (transits are downward dips).
+
+STEP 8: normalize (method=median)
+  Divides flux by global median so typical level ≈ 1.0.
+
+STEP 9: quality_metrics (cdpp_duration_hours=1.0)
+  Computes diagnostic statistics stored in metadata:
+    - RMS (parts per million)
+    - CDPP: Combined Differential Photometric Precision (1-hour CDPP is a
+      standard TESS noise metric)
+    - Duty cycle
+
+Output: data/processed/tic_<id>.npz (processed light curve)
+Summary: outputs/reports/preprocessing_summary.json (aggregate)
+
+------------------------------------------------------------------------------
+5.3  TRANSIT CANDIDATE EVENT (TCE) SEARCH — BOX LEAST SQUARES
+------------------------------------------------------------------------------
+
+Command: runs automatically inside `exodet update` (or standalone `exodet tce`)
+
+5.3.1  THE BOX LEAST SQUARES (BLS) ALGORITHM
+--------------------------------------------
+BLS (Kovács, Zucker, & Mazeh 2002) finds the period P, epoch t0, duration T,
+and depth δ that best fit a "box" (rectangular dip) to the light curve.
+
+For each trial period P and duration T, the algorithm partitions cadences
+into "in-transit" and "out-of-transit" sets and maximizes the "signal residue"
+(equivalent to SNR of the box fit). Astropy's BoxLeastSquares class evaluates
+this over a grid of frequencies f = 1/P and durations T.
+
+Grid generation (src/exodet/tce/grid.py):
+  - min_period_days = 0.5
+  - max_period_days = baseline / min_n_transits (auto from light curve length)
+  - Frequency spacing: df = min_duration / (oversample × baseline²)
+    This is the standard BLS frequency resolution criterion.
+  - n_durations = 5 geometrically spaced between 0.02 and 0.3 days
+  - SAFETY CAP: n_frequencies = 50000 (we added this; without it, multi-year
+    baselines produced 2-billion-frequency grids and crashed)
+
+5.3.2  PERIODOGRAM AND PEAKS
+----------------------------
+The BLS engine (astropy_bls) computes a periodogram: power vs trial period.
+Peak detection (prominence threshold) finds the top 5 peaks per target.
+
+5.3.3  DETECTION METRICS (per candidate)
+----------------------------------------
+For each peak, ExoDet computes:
+  - SNR: signal-to-noise ratio of the box fit
+  - SDE: Signal Detection Efficiency (robust variant using detrended power)
+  - Power: raw BLS power
+  - FAP: False Alarm Probability (how likely this peak is noise)
+  - Odd-even test: compares odd vs even transits for asymmetry (V-shaped
+    eclipsing binaries often fail this)
+
+5.3.4  PHYSICAL VALIDATION
+--------------------------
+Candidates must pass:
+  - min_n_transits ≥ 2 (at least 2 transit events in baseline)
+  - min_coverage ≥ 0.5
+  - min_sde ≥ 7.0, min_snr ≥ 5.0
+  - depth and duration ratio checks
+
+In our live run, STRICT validation rejected ALL peaks on several targets
+(min_sde=7 is hard for noisy real data). We set accepted_only: false in
+representation config so the top 5 BLS peaks still become ML samples even
+when labeled "rejected_validation" in the TCE catalog.
+
+5.3.5  HARMONIC REJECTION
+---------------------------
+Checks if a peak is a harmonic (P/2, P/3, …) of a stronger peak. Prevents
+duplicate candidates at alias periods.
+
+5.3.6  RANKING
+--------------
+Composite score: 0.4×SNR + 0.4×SDE + 0.2×power
+
+Output:
+  outputs/reports/tce_candidates.json  (full catalog)
+  outputs/reports/tce_candidates.csv
+  outputs/reports/tce_detection_summary.json
+  outputs/figures/tic_*_periodogram.png (if n_figure_targets > 0)
+
+------------------------------------------------------------------------------
+5.4  REPRESENTATION LAYER — VIEWS AND PHYSICS FEATURES
+------------------------------------------------------------------------------
+
+For each TransitCandidate + processed LightCurve, ExoDet builds one
+DatasetSample — the atomic unit of ML training.
+
+5.4.1  PHASE FOLDING AND ALIGNMENT
+------------------------------------
+PhaseFoldedCurve: fold by candidate period/epoch, optionally align transits
+to a common center (corrects epoch uncertainty up to 0.5 durations).
+
+5.4.2  GLOBAL VIEW (2001 bins)
+--------------------------------
+Bins the full orbit from phase -0.5 to +0.5 into 2001 equal-width phase bins.
+Statistic per bin: median flux (robust to outliers).
+Normalization: Astronet-style (median centering of out-of-transit baseline).
+Shape: vector of length 2001.
+
+Purpose: captures ORBITAL-SCALE context — stellar variability, secondary
+eclipses, harmonic structure, out-of-transit trends.
+
+5.4.3  LOCAL VIEW (401 bins)
+----------------------------
+Zooms on ±2 transit durations around phase 0.
+Bins: 401 equal-width bins.
+Same median binning and Astronet normalization.
+Shape: vector of length 401.
+
+Purpose: captures TRANSIT MORPHOLOGY — ingress/egress steepness, depth,
+V vs U shape, duration, asymmetry. This is what the CNN branch sees.
+
+5.4.4  PHYSICS FEATURES (33 dimensions in our run)
+--------------------------------------------------
+Hand-engineered scalar features from:
+  Groups: ephemeris, detection, shape, photometry, quality
+
+Examples:
+  - period_days, epoch_bjd, duration_days, depth
+  - snr, sde, power, neg_log_fap
+  - ingress_duration, egress_duration, symmetry_metric
+  - flux percentiles (5, 25, 50, 75, 95)
+  - in_transit_rms, out_of_transit_rms, cdpp
+
+These encode domain knowledge that pure neural nets might need many examples
+to learn. The PhysicsFeatureEncoder MLP projects them to embed_dim=64.
+
+5.4.5  FEATURE SCALING
+----------------------
+RobustScaler (median/IQR) fit on training data, saved to
+data/processed/dataset/feature_scaler.json.
+Log-transform applied to heavy-tailed features: snr, power, neg_log_fap.
+
+------------------------------------------------------------------------------
+5.5  DATASET ASSEMBLY, SCALING, AND SPLITTING
+------------------------------------------------------------------------------
+
+Samples saved as:
+  data/processed/dataset/train.npz  + train.json (sidecar metadata)
+  validation.npz, test.npz (created by star-level split script)
+  manifest.json (provenance: which TICs, versions, checksums)
+
+Each sample contains:
+  - global_view: float array (2001,)
+  - local_view: float array (401,)
+  - features: float array (33,)
+  - label: 0 or 1 (or -1 if unlabeled)
+  - sample_id, target_id, candidate metadata
+
+STAR-LEVEL SPLITTING (critical for honest evaluation):
+We split by target_id so NO star appears in both train and test. Otherwise
+the model memorizes star-specific noise and scores artificially high.
+
+Our split after live run:
+  train:       25 samples, 5 stars, labels {0, 1}
+  validation:   5 samples, 1 star,  label {0} only
+  test:        10 samples, 2 stars, label {1} only
+
+The test set being single-class means ROC-AUC is undefined (NaN) — a real
+limitation of our small 9-star dataset, not a software bug.
+
+================================================================================
+6. MACHINE LEARNING FUNDAMENTALS (MINIMAL BUT PRECISE)
+================================================================================
+
+6.1  SUPERVISED CLASSIFICATION
+------------------------------
+We have labeled examples (x_i, y_i) where:
+  x_i = feature representation of a candidate (views + physics)
+  y_i ∈ {0, 1}  (0 = not a planet, 1 = planet)
+
+Goal: learn a function f(x) → probability P(y=1|x).
+
+6.2  TRAIN / VALIDATION / TEST
+------------------------------
+  - TRAIN: fit model parameters
+  - VALIDATION: tune hyperparameters, early stopping
+  - TEST: final unbiased performance estimate (touch once)
+
+6.3  LOSS FUNCTIONS
+-------------------
+  - BCE (Binary Cross-Entropy):
+      L = -[y·log(p) + (1-y)·log(1-p)]
+    Penalizes confident wrong predictions heavily.
+
+  - Cross-Entropy (multi-class):
+      L = -log(p_correct_class)
+    Used when num_classes=5 (transit, EB, variable, blend, noise).
+
+6.4  OPTIMIZER (AdamW)
+----------------------
+AdamW adapts learning rate per parameter and decouples weight decay from
+gradient update. Our config: lr=1e-3, weight_decay=0.01.
+
+6.5  METRICS
+------------
+  - Accuracy: fraction correct (misleading if classes imbalanced)
+  - ROC-AUC: area under Receiver Operating Characteristic curve
+  - PR-AUC: area under Precision-Recall curve (better for rare positives)
+  - F1: harmonic mean of precision and recall
+  - Calibration error: do predicted probabilities match true frequencies?
+
+6.6  OVERFITTING
+----------------
+With 40 samples and a million-parameter neural net, overfitting is guaranteed
+without regularization (dropout, weight decay, early stopping, data augmentation).
+Our fusion model has ~3M parameters — far more than samples.
+
+================================================================================
+7. MODELS IMPLEMENTED IN EXODET
+================================================================================
+
+------------------------------------------------------------------------------
+7.1  LOGISTIC REGRESSION (sklearn baseline)
+------------------------------------------------------------------------------
+
+File: src/exodet/benchmarking/baselines.py → LogisticRegressionModel
+
+MODEL:
+  P(y=1|x) = σ(w·x + b) = 1 / (1 + exp(-(w·x + b)))
+
+where x is the flattened feature vector (physics features only, or views+
+features depending on use_views config), w is learned weights, b is bias,
+σ is the sigmoid function.
+
+TRAINING:
+  sklearn.linear_model.LogisticRegression with:
+    - C=1.0 (inverse regularization strength; L2 penalty)
+    - class_weight='balanced' (upweights minority class)
+    - max_iter=500
+
+WHEN TO USE:
+  - Fast sanity check (~0.06 seconds on 4 samples)
+  - Interpretable coefficients (which features matter)
+  - Backend: sklearn (no GPU, no epochs)
+
+CHECKPOINT FORMAT:
+  model.joblib + model.json (NOT PyTorch .pt files)
+
+Our early incremental runs used this before switching to fusion.
+
+------------------------------------------------------------------------------
+7.2  XGBOOST (gradient-boosted decision trees)
+------------------------------------------------------------------------------
+
+File: src/exodet/ml/models.py → XGBoostModel
+
+MODEL:
+  An ensemble of decision trees trained sequentially, each correcting the
+  residual errors of the previous trees (gradient boosting). XGBoost is
+  highly effective on tabular features.
+
+DEFAULT PARAMS (train_example.yaml):
+  n_estimators=200, max_depth=4, learning_rate=0.05
+
+WHEN TO USE:
+  Strong baseline on physics features alone; faster than neural nets.
+
+------------------------------------------------------------------------------
+7.3  THE FUSION NEURAL NETWORK (CNN + Transformer + Physics)
+------------------------------------------------------------------------------
+
+File: src/exodet/models/classifier.py → HybridExoplanetNetwork
+Registry name: fusion (configs/training_research.yaml)
+
+This is the primary research model. It has THREE parallel encoders whose
+outputs are fused, then fed to classification heads.
+
+INPUTS PER SAMPLE:
+  global_view: tensor shape (batch, 2001)
+  local_view:  tensor shape (batch, 401)
+  physics:     tensor shape (batch, 33)
+
+HYPERPARAMETERS (our live run):
+  embed_dim = 64        (all branches project to 64-dim vectors)
+  hidden_dim = 128      (transformer FFN width)
+  cnn_channels = [16, 32]
+  cnn_kernel_sizes = [5, 3]
+  transformer_depth = 2 layers
+  transformer_heads = 2
+  physics_hidden_dims = [32]
+  num_classes = 5
+  trainer_output = binary_transit  (outputs 1 logit for BCE training)
+
+--- 7.3.1  LOCAL CNN BRANCH (LocalCNNEncoder) ---
+
+File: src/exodet/models/cnn.py
+
+PURPOSE: Learn spatial patterns in the ZOOMED-IN transit shape.
+
+ARCHITECTURE:
+  Input: local_view (B, 1, 401) — treated as 1-channel 1D signal
+
+  Stage 0: Conv1d(1→16, kernel=5) + BatchNorm + GELU
+  Stage 1: ResidualConvBlock(16→32, kernel=5) + BatchNorm + GELU + Dropout
+  Stage 2: ResidualConvBlock(32→32, kernel=3)
+
+  Each ResidualConvBlock:
+    output = GELU( ConvBlock(x) + Projection(x) )
+  This is a ResNet-style skip connection — helps gradients flow in deep nets.
+
+  Pooling: AdaptiveAvgPool1d(1) → vector of length 32
+  Projection: Linear(32 → 64) = embed_dim
+
+OUTPUT: local_embedding (B, 64), cnn_activations (B, 32, L') for GradCAM
+
+WHY CNN FOR TRANSITS:
+  Transits have LOCAL shape features (sharp ingress = planet, gradual = star).
+  Convolutional filters detect edges and slopes at multiple scales (kernel 5
+  = wide, kernel 3 = narrow).
+
+--- 7.3.2  GLOBAL TRANSFORMER BRANCH (GlobalTransformerEncoder) ---
+
+File: src/exodet/models/transformer.py
+
+PURPOSE: Learn long-range periodic and aperiodic structure in the full orbit.
+
+ARCHITECTURE (Vision Transformer style applied to 1D light curves):
+
+  1. Input projection: Linear(1 → 64) per phase bin → tokens (B, 2001, 64)
+  2. Prepend CLS token: learnable vector (like BERT/ViT) that aggregates info
+  3. Add positional embeddings: learnable (1, 2002, 64) — tells the model
+     WHERE in phase each bin sits
+  4. Stack of 2 TransformerEncoderBlocks:
+       Each block (pre-norm):
+         x = x + MultiHeadSelfAttention(LayerNorm(x))
+         x = x + FFN(LayerNorm(x))
+       Multi-head attention (2 heads, 64 dim):
+         Attention(Q,K,V) = softmax(QK^T / √d_k) V
+         Allows each phase bin to attend to every other bin.
+  5. LayerNorm → read out CLS token embedding (B, 64)
+
+OUTPUT: global_embedding (B, 64), cls_attention weights for explainability
+
+WHY TRANSFORMER FOR TRANSITS:
+  - Secondary eclipses appear at phase 0.5 (binary stars)
+  - Stellar pulsation creates patterns across the full phase
+  - Transit timing variations require comparing multiple dips
+  CNNs have limited receptive field; self-attention sees the entire orbit.
+
+--- 7.3.3  PHYSICS FEATURE MLP ENCODER (PhysicsFeatureEncoder) ---
+
+File: src/exodet/models/physics_encoder.py
+
+PURPOSE: Inject explicit domain knowledge (period, SNR, depth, …).
+
+ARCHITECTURE:
+  Input: 33 physics features
+  Linear(33 → 32) + LayerNorm + GELU + Dropout
+  Linear(32 → 64) = embed_dim
+
+WHY NOT SKIP THIS:
+  Neural branches need thousands of examples to learn that "high SNR + shallow
+  depth + long period" correlates with planet status. The MLP gets these facts
+  directly.
+
+--- 7.3.4  CROSS-ATTENTION FUSION (CrossAttentionFusion) ---
+
+File: src/exodet/models/fusion.py
+
+INPUT: stacked embeddings (B, 3, 64) — [CNN, Transformer, Physics]
+
+DEFAULT STRATEGY (cross_attention):
+  1. LayerNorm on branch tokens
+  2. Query = mean of branches projected through Linear(64→64)
+  3. Multi-head cross-attention: query attends to all 3 branch tokens
+  4. Gating: sigmoid gate on concatenated branches learns per-branch weights
+  5. Residual: fused = LayerNorm(attn_out + gated_sum + Linear(flat))
+
+ALTERNATIVE STRATEGIES (configurable):
+  - gated: pure feature-wise gates, no attention
+  - residual: simple linear projection of concatenated branches
+
+OUTPUT: fused representation (B, 64), fusion_attention weights
+
+--- 7.3.5  CLASSIFICATION AND CONFIDENCE HEADS ---
+
+ClassificationHead:
+  Dropout(0.2) → Linear(64 → num_classes=5)
+  Outputs logits z ∈ R^5; softmax gives class probabilities.
+
+For binary training (trainer_output=binary_transit):
+  Only the "transit" class logit is passed to BCE loss.
+
+ConfidenceHead:
+  Linear(64→128) → GELU → Dropout → Linear(128→1) → Sigmoid
+  Predicts scalar confidence ∈ [0,1] for calibration.
+
+CLASS LABELS (5-class head):
+  0: transit (planet)
+  1: eclipsing_binary
+  2: variable_star
+  3: blend
+  4: noise
+
+In our binary run, we trained with BCE on planet vs not-planet, but the
+architecture still has 5 output neurons available for multi-class research.
+
+================================================================================
+8. TRAINING SYSTEMS
+================================================================================
+
+------------------------------------------------------------------------------
+8.1  SKLEARN BACKEND (fast baselines)
+------------------------------------------------------------------------------
+
+Config: training.trainer.params.backend=sklearn
+
+Flow (SupervisedTrainer._train_sklearn):
+  1. Flatten views/features to matrix X (n_samples, n_features)
+  2. model.fit(X, y)
+  3. Save model.joblib + model.json
+  4. Return TrainingResult (history={} — no per-epoch metrics)
+
+No GPU, no CheckpointManager (.pt files), completes in milliseconds.
+
+------------------------------------------------------------------------------
+8.2  PYTORCH BACKEND (neural models)
+------------------------------------------------------------------------------
+
+Config: training.trainer.params.backend=torch
+
+Flow (SupervisedTrainer._train_torch):
+  1. Build DataLoader from RepresentationDataset
+  2. Infer input_dim from first batch
+  3. Build optimizer, loss, scheduler, AMP scaler
+  4. Epoch loop: train → validate → callbacks → checkpoint
+  5. CheckpointManager saves best.pt, last.pt based on val_loss
+
+Device selection: auto-detects CUDA > MPS (Apple Silicon) > CPU.
+Our live run used Apple Silicon MPS.
+
+------------------------------------------------------------------------------
+8.3  RESEARCH TRAINER (ResearchSupervisedTrainer)
+------------------------------------------------------------------------------
+
+File: src/exodet/training/research_trainer.py
+Config: training.trainer.name=research
+
+Extends the standard trainer with:
+
+CURRICULUM LEARNING (disabled in our live run — needs SNR metadata):
+  Train on high-SNR examples first, gradually add harder low-SNR cases.
+  Stages: high_snr (SNR>12) → medium → low → edge cases.
+
+CLASS IMBALANCE HANDLING (disabled in live run):
+  Effective number reweighting + oversample positives 1.5×.
+
+DATA AUGMENTATION (disabled in live run due to bugs):
+  Gaussian noise, red noise, baseline drift, phase shift, depth/duration
+  perturbation, cadence masking, timing jitter.
+  Each simulates real systematic effects.
+
+HARD EXAMPLE MINING:
+  Tracks high-loss samples and boosts their sampling weight.
+
+CHECKPOINT AVERAGING:
+  EMA (Exponential Moving Average): maintains shadow weights
+    θ_ema = 0.999·θ_ema + 0.001·θ
+  SWA (Stochastic Weight Averaging): averages weights from epoch 3 onward.
+  Exported: ema.pt, swa.pt
+
+DISTILLATION (disabled):
+  Train student network to match teacher soft probabilities.
+
+PRETRAINING / CONTRASTIVE (disabled):
+  Self-supervised masks on light curves.
+
+Our live run disabled curriculum, imbalance, and augmentation because the
+dataset has only 40 samples and some augmentation code paths have shape bugs.
+
+------------------------------------------------------------------------------
+8.4  LOSS, OPTIMIZER, SCHEDULER
+------------------------------------------------------------------------------
+
+Loss: BCE (binary cross-entropy with logits)
+Optimizer: AdamW (lr=1e-3, weight_decay=0.01)
+Scheduler: cosine annealing (lr decays smoothly over epochs)
+Gradient clipping: max_norm=1.0
+AMP: none (could be fp16/bf16 on CUDA)
+
+------------------------------------------------------------------------------
+8.5  CHECKPOINTING AND TRACKING
+------------------------------------------------------------------------------
+
+CheckpointManager (src/exodet/ml/checkpoints.py):
+  - Saves last.pt every epoch
+  - Saves best.pt when val_loss improves (no val split in our run → best=None)
+  - Checkpoint contains: model_state, optimizer_state, epoch, metrics
+
+Tracking (src/exodet/ml/tracking.py):
+  - CSV logger → outputs/checkpoints/fusion_research_v1/metrics.csv
+  - TensorBoard → outputs/checkpoints/fusion_research_v1/tensorboard/
+  - run_metadata.json with git commit, library versions
+
+================================================================================
+9. EVALUATION AND SCIENTIFIC INFERENCE
+================================================================================
+
+9.1  EVALUATION (exodet evaluate)
+---------------------------------
+Loads test split → InferenceEngine → predict_proba → compute metrics.
+
+Our result (fusion_research_v1_test.json):
+  accuracy: 1.0
+  calibration_error: ~0.04
+  roc_auc: NaN (test set has only label=1 samples)
+
+9.2  INFERENCE (exodet infer)
+-----------------------------
+ScientificInferencePipeline per sample:
+  - Parameter fitting (transit depth, duration via least squares)
+  - Physical parameters (equilibrium temperature estimate)
+  - Uncertainty (bootstrap / MC dropout — disabled by default)
+  - Explainability (GradCAM, integrated gradients, attention maps)
+
+9.3  REPORTS (exodet report)
+----------------------------
+ReportGenerator creates per-candidate directories with:
+  - JSON summary, PDF report, CSV tables
+  - Transit fit figures, uncertainty bands
+  - (Explainability disabled in our run due to attention shape bug)
+
+================================================================================
+10. WHAT WE ACTUALLY RAN (CONCRETE RESULTS)
+================================================================================
+
+TIMELINE OF LIVE END-TO-END SESSION:
+
+Phase 1 — Repository verified: all CLI commands exist.
+
+Phase 2 — Configs validated; fixes applied:
+  - update.yaml: lightkurve+SPOC, TESS-only, BLS grid cap
+  - training_research.yaml: global_bins=2001, local_bins=401
+  - report.yaml: inherits training_research.yaml
+  - sources.py: per-sector download, sector metadata, skip 404s
+
+Phase 3 — Data download + full update pipeline:
+  Positive TICs (5): all processed with real PDCSAP
+  Negative TICs (4/5): 400799224 has no SPOC data on MAST
+  Total wall time: ~45 minutes (BLS on million-cadence curves is slow)
+
+Phase 4-6 — Preprocessing, TCE, representation: all inside `exodet update`
+
+Phase 7 — Dataset validation:
+  40 samples, balanced 20/20, no NaNs, 33 features, views 2001+401
+
+Phase 8 — Training:
+  Model: fusion (CNN+Transformer+Physics)
+  Device: Apple MPS
+  Epochs: 15, batch_size: 4
+  Time: 19 seconds
+  Final train loss: ~0.10
+  Artifacts: last.pt (3 MB), ema.pt, swa.pt, metrics.csv, tensorboard/
+
+Phase 9 — Evaluation:
+  accuracy=1.0 on 10-sample test (2 stars, all label=1)
+
+Phase 10 — Inference + reports:
+  10 candidates analyzed, reports in outputs/reports/reports/
+
+BUGS ENCOUNTERED AND WORKED AROUND (not hidden):
+  1. HLSP/QLP products lack pdcsap_flux → fixed with SPOC filter
+  2. Sector metadata shape (1,) vs millions of cadences → per-sector download
+  3. BLS grid explosion on long baselines → n_frequencies=50000 cap
+  4. Gap interpolation inflating cadence count → max_gap_days=0.05
+  5. Strict TCE validation rejecting all peaks → accepted_only=false
+  6. CSV labels not auto-read → two-pass update with default_label override
+  7. Fusion global_bins mismatch (128 vs 2001) → config fix
+  8. Research augmentation config param name mismatches → disabled
+  9. Attention explainability crash → disabled for infer/report
+ 10. TIC 400799224: no downloadable SPOC light curve
+
+================================================================================
+11. OUTPUT FILES AND WHERE TO FIND THEM
+================================================================================
+
+DATA:
+  data/tic_training_catalog.csv       — full 10-target catalog
+  data/tics_positive.csv              — 5 positives
+  data/tics_negative.csv              — 5 negatives
+  data/raw/tic_*.npz                  — downloaded raw light curves
+  data/processed/tic_*.npz            — preprocessed light curves
+  data/processed/dataset/train.npz    — ML training samples
+  data/processed/dataset/validation.npz
+  data/processed/dataset/test.npz
+  data/processed/dataset/feature_scaler.json
+  data/processed/dataset/manifest.json
+  data/processed/dataset_registry.json
+
+REPORTS:
+  outputs/reports/update_summary.json — per-target pipeline status
+  outputs/reports/tce_candidates.json — BLS candidate catalog
+  outputs/reports/tce_candidates.csv
+  outputs/reports/fusion_research_v1_test.json — evaluation metrics
+  outputs/reports/reports/            — per-sample scientific reports
+
+CHECKPOINTS:
+  outputs/checkpoints/fusion_research_v1/last.pt
+  outputs/checkpoints/fusion_research_v1/best.pt  (copy of last.pt)
+  outputs/checkpoints/fusion_research_v1/ema.pt
+  outputs/checkpoints/fusion_research_v1/swa.pt
+  outputs/checkpoints/fusion_research_v1/training_report.json
+  outputs/checkpoints/fusion_research_v1/metrics.csv
+  outputs/checkpoints/fusion_research_v1/tensorboard/
+
+LOGS:
+  outputs/logs/e2e_update_positive_v3.log
+  outputs/logs/e2e_update_negative.log
+  outputs/logs/e2e_train_fusion_v6.log
+  outputs/logs/e2e_evaluate.log
+
+================================================================================
+12. KNOWN LIMITATIONS AND HONEST CAVEATS
+================================================================================
+
+1. SAMPLE SIZE: 40 samples / 9 stars is far too small for reliable deep
+   learning conclusions. The model can memorize star-specific noise.
+
+2. TEST SET DESIGN: test split has only positive labels → ROC-AUC undefined.
+   Need more stars and balanced test set for proper evaluation.
+
+3. TCE VALIDATION TOO STRICT: min_sde=7 rejects real planet signals on noisy
+   targets. We used rejected peaks as samples (accepted_only=false), which
+   mixes signal quality levels.
+
+4. LABEL GRANULARITY: We label entire stars as 0 or 1, but each star has 5
+   candidate peaks — all inherit the same label regardless of which peak
+   is the "true" transit.
+
+5. MULTI-YEAR BASELINES: TIC 261136679 has 2.2M cadences after preprocessing.
+   BLS even with 50k frequencies takes ~7 minutes per target.
+
+6. RESEARCH FEATURES DISABLED: augmentation, curriculum, imbalance handling
+   were off for the live run. Full research config untested at scale.
+
+7. 5-CLASS HEAD / BINARY TRAINING MISMATCH: architecture has 5 outputs but
+   we train with binary BCE on class 0 only.
+
+8. NO HYPERPARAMETER SEARCH: single config, no cross-validation on this dataset.
+
+================================================================================
+13. COMMAND REFERENCE
+================================================================================
+
+# Setup
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+
+# Ingest positives (real TESS)
+exodet update -c configs/update.yaml --tic-file data/tics_positive.csv \
+  -o labeling.default_label=1 \
+  -o update.resume_training=false \
+  -o update.evaluation.enabled=false
+
+# Ingest negatives
+exodet update -c configs/update.yaml --tic-file data/tics_negative.csv \
+  -o labeling.default_label=0 \
+  -o update.resume_training=false
+
+# Fast sklearn baseline
+exodet train -c configs/update.yaml \
+  -o model.architecture.name=logistic_regression \
+  -o training.trainer.params.backend=sklearn \
+  -o training.trainer.params.use_views=features_only
+
+# Fusion research training
+exodet train -c configs/training_research.yaml \
+  -o training.epochs=15 \
+  -o training.batch_size=4 \
+  -o training.trainer.params.research.augmentation.enabled=false \
+  -o training.trainer.params.research.imbalance.enabled=false \
+  -o training.trainer.params.research.curriculum.enabled=false
+
+# Evaluate
+exodet evaluate -c configs/training_research.yaml
+
+# Scientific inference + reports
+exodet infer -c configs/report.yaml -o inference.explainability.enabled=false
+exodet report -c configs/report.yaml \
+  -o inference.explainability.enabled=false \
+  -o report.include_explainability=false
+
+# Standalone stages (if not using update)
+exodet tce -c configs/tce_example.yaml
+exodet dataset -c configs/representation_example.yaml
+
+================================================================================
+14. GLOSSARY
+================================================================================
+
+BLS          Box Least Squares — transit search algorithm
+CDPP         Combined Differential Photometric Precision (noise metric)
+CLS token    Classifier token in Transformers — aggregate sequence readout
+CSV          Comma-separated values
+EMA          Exponential Moving Average of model weights
+Epoch        One full pass through the training dataset
+FAP          False Alarm Probability
+FFT          Fast Fourier Transform
+GPU/MPS      Graphics / Apple Silicon accelerator for neural net training
+HLSP         High-Level Science Product (non-SPOC TESS products)
+Light curve  Time series of stellar brightness
+Logit        Raw pre-sigmoid output of a classifier
+MAST         Mikulski Archive for Space Telescopes
+ML           Machine Learning
+MLP          Multi-Layer Perceptron (fully connected neural network)
+NPZ          NumPy compressed array file format
+PDCSAP       Pre-search Data Conditioning Simple Aperture Photometry
+Phase fold   Stack all orbits by orbital phase
+Pipeline     Ordered sequence of data processing steps
+ROC-AUC      Area under Receiver Operating Characteristic curve
+SDE          Signal Detection Efficiency
+SPOC         Science Processing Operations Center (official TESS pipeline)
+SWA          Stochastic Weight Averaging
+TCE          Transit Candidate Event
+TESS         Transiting Exoplanet Survey Satellite
+TIC          Tess Input Catalog identifier
+TOI          TESS Object of Interest
+Transit      Brightness dip when a planet passes in front of a star
+YAML         Human-readable configuration file format
+
+================================================================================
+END OF DOCUMENT
+================================================================================
+
+For deeper module-level documentation see also:
+  docs/incremental_training.md
+  docs/dataset_versioning.md
+  docs/inference.md
+  docs/explainability.md
+  docs/training_research_progress.md
