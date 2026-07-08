@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import resource
 import time
 from pathlib import Path
 
@@ -13,6 +12,7 @@ from exodet.representation.cache import RepresentationCache
 from exodet.representation.containers import RepresentationDataset
 from exodet.tce import inject_box_transit, make_noise_light_curve
 from exodet.tce.candidate import TransitCandidate
+from exodet.utils.process_metrics import process_rss_bytes
 from exodet.utils.seeding import seed_everything
 
 
@@ -96,7 +96,7 @@ def benchmark_batch(
         samples.append(pipeline.build_sample(curve, candidate))
     wall = time.perf_counter() - wall_start
     cpu = time.process_time() - cpu_start
-    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    rss = process_rss_bytes() or 0
 
     tmp = Path("outputs/reports/_bench_tmp.npz")
     tmp.parent.mkdir(parents=True, exist_ok=True)
@@ -111,7 +111,7 @@ def benchmark_batch(
         "cpu_seconds": round(cpu, 3),
         "cpu_utilization": round(cpu / wall, 3) if wall > 0 else None,
         "seconds_per_sample": round(wall / max(len(pairs), 1), 4),
-        "max_rss_mb": round(rss / 1e6, 1),
+        "max_rss_mb": round(rss / (1024**2), 1),
         "disk_kb_per_sample": round(disk_bytes / max(len(pairs), 1) / 1024, 1),
     }
     if cache is not None:

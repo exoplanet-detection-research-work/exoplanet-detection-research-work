@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +13,7 @@ from typing import Any, Mapping
 from exodet.config.schema import ExperimentConfig
 from exodet.ml.tracking import collect_environment_info
 from exodet.utils.io import sha256_of_file
+from exodet.utils.process_metrics import system_memory_bytes
 
 __all__ = [
     "ReproducibilitySnapshot",
@@ -74,6 +74,9 @@ def checksum_directory(path: Path, pattern: str = "*") -> str:
 
 def _hardware_info() -> dict[str, Any]:
     info: dict[str, Any] = {"platform": platform.platform(), "processor": platform.processor()}
+    memory_bytes = system_memory_bytes()
+    if memory_bytes is not None:
+        info["memory_bytes"] = memory_bytes
     try:
         import torch
 
@@ -81,18 +84,6 @@ def _hardware_info() -> dict[str, Any]:
             info["cuda_device"] = torch.cuda.get_device_name(0)
             info["cuda_version"] = torch.version.cuda
     except ImportError:
-        pass
-    try:
-        result = subprocess.run(
-            ["sysctl", "-n", "hw.memsize"],
-            capture_output=True,
-            text=True,
-            timeout=3,
-            check=False,
-        )
-        if result.stdout.strip():
-            info["memory_bytes"] = int(result.stdout.strip())
-    except (FileNotFoundError, ValueError, subprocess.SubprocessError):
         pass
     return info
 

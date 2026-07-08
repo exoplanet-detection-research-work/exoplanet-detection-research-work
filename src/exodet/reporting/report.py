@@ -18,6 +18,7 @@ from exodet.inference.containers import ScientificInferenceResult
 from exodet.inference.config import ReportStageConfig
 from exodet.representation.containers import DatasetSample
 from exodet.utils.io import ensure_dir, write_json
+from exodet.utils.paths import safe_filename
 
 __all__ = ["CandidateReport", "ReportGenerator"]
 
@@ -58,7 +59,7 @@ class ReportGenerator:
     ) -> CandidateReport:
         """Generates report artefacts for one candidate."""
         ensure_dir(output_dir)
-        prefix = result.sample_id.replace("/", "_")
+        prefix = safe_filename(result.sample_id)
         figures = self._make_figures(result, sample, output_dir, prefix)
 
         if "json" in self.config.formats:

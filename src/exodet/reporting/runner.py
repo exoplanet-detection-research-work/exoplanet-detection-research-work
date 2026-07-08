@@ -12,6 +12,7 @@ from exodet.inference.runner import run_inference, _load_dataset_split
 from exodet.reporting.report import ReportGenerator
 from exodet.representation.containers import RepresentationDataset
 from exodet.utils.io import ensure_dir, write_json
+from exodet.utils.paths import safe_filename
 from exodet.utils.timing import Timer
 
 __all__ = ["run_report_generation"]
@@ -48,7 +49,7 @@ def run_report_generation(
             sample = sample_map.get(result.sample_id)
             if sample is None:
                 continue
-            generator.generate(result, sample, out_root / result.sample_id.replace("/", "_"))
+            generator.generate(result, sample, out_root / safe_filename(result.sample_id))
             generated += 1
             if report_cfg.top_n > 0 and generated >= report_cfg.top_n:
                 break

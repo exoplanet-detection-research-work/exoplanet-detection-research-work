@@ -922,7 +922,10 @@ LOGS:
 ================================================================================
 
 # Setup
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+
+# Windows (cmd):  .venv\Scripts\activate
+# macOS / Linux:   source .venv/bin/activate
 pip install -e ".[dev]"
 
 # Ingest positives (real TESS)

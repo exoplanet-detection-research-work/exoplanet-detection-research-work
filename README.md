@@ -48,10 +48,25 @@ concrete data sources, preprocessing steps, and models land next.
 
 ## Installation
 
+Requires Python 3.11+.
+
 ### pip (development install)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+```
+
+#### Windows
+
+```cmd
+.venv\Scripts\activate
+pip install -e ".[dev]"
+```
+
+#### macOS / Linux
+
+```bash
+source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
@@ -61,8 +76,6 @@ pip install -e ".[dev]"
 conda env create -f environment.yml
 conda activate exodet
 ```
-
-Requires Python 3.11+.
 
 ## Usage
 

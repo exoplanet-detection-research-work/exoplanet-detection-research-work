@@ -322,8 +322,14 @@ class TestCache:
         )
 
     def test_mmap_requires_uncompressed(self) -> None:
+        import tempfile
+
         with pytest.raises(PipelineError, match="Memory mapping"):
-            RepresentationCache("/tmp/x", compress=True, mmap=True)
+            RepresentationCache(
+                Path(tempfile.gettempdir()) / "exodet_test_cache",
+                compress=True,
+                mmap=True,
+            )
 
 
 class TestAugmentation:

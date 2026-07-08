@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import resource
 import time
 import tracemalloc
 from pathlib import Path
@@ -26,6 +25,7 @@ from exodet.tce import (
     inject_box_transit,
     make_noise_light_curve,
 )
+from exodet.utils.process_metrics import process_rss_bytes
 from exodet.utils.seeding import seed_everything
 
 
@@ -79,7 +79,7 @@ def benchmark_batch(pipeline: TCEPipeline, curves: list) -> dict[str, Any]:
     cpu = time.process_time() - cpu_start
     _, peak_bytes = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-    max_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss  # bytes on macOS
+    max_rss = process_rss_bytes() or 0
 
     return {
         "n_curves": len(curves),
@@ -89,7 +89,7 @@ def benchmark_batch(pipeline: TCEPipeline, curves: list) -> dict[str, Any]:
         "cpu_utilization": round(cpu / wall, 3) if wall > 0 else None,
         "seconds_per_curve": round(wall / len(curves), 4),
         "tracemalloc_peak_mb": round(peak_bytes / 1e6, 2),
-        "max_rss_mb": round(max_rss / 1e6, 2),
+        "max_rss_mb": round(max_rss / (1024**2), 2),
     }
 
 

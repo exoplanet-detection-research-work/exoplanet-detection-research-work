@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import resource
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -35,6 +34,7 @@ from exodet.exceptions import PipelineError
 from exodet.ml.trainer import build_trainer
 from exodet.representation.containers import RepresentationDataset
 from exodet.utils.io import ensure_dir, write_json
+from exodet.utils.process_metrics import process_rss_bytes
 from exodet.utils.seeding import seed_everything
 
 __all__ = ["run_benchmark", "run_sensitivity", "load_benchmark_splits"]
@@ -77,11 +77,7 @@ def _dataset_summary(splits: dict[str, RepresentationDataset]) -> dict[str, Any]
 
 
 def _memory_bytes() -> int | None:
-    try:
-        usage = resource.getrusage(resource.RUSAGE_SELF)
-        return int(getattr(usage, "ru_maxrss", 0))
-    except Exception:
-        return None
+    return process_rss_bytes()
 
 
 def run_benchmark(

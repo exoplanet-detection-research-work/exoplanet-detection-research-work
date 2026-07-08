@@ -27,6 +27,7 @@ from exodet.models.base import MODELS, BaseModel
 from exodet.representation.containers import DatasetSample, RepresentationDataset
 from exodet.inference.scientific import build_reproduction_metadata
 from exodet.utils.io import ensure_dir, write_json
+from exodet.utils.paths import safe_filename
 
 __all__ = ["ScientificInferencePipeline"]
 
@@ -124,7 +125,7 @@ class ScientificInferencePipeline:
                     engine.model,
                     sample,
                     figure_root,
-                    prefix=sample.sample_id.replace("/", "_"),
+                    prefix=safe_filename(sample.sample_id),
                 )
 
             results.append(

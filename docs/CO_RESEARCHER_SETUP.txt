@@ -65,7 +65,13 @@ VERIFY AFTER TRAINING:
   git clone https://github.com/exoplanet-detection-research-work/exoplanet-detection-research-work.git
   cd exoplanet-detection-research-work
   python3 -m venv .venv
-  source .venv/bin/activate
+
+  Windows (cmd):
+    .venv\Scripts\activate
+
+  macOS / Linux:
+    source .venv/bin/activate
+
   pip install -e ".[dev]"
 
   # Required for real TESS downloads:
@@ -80,14 +86,24 @@ VERIFY AFTER TRAINING:
 ================================================================================
 
 STEP 0 — Clear any stale local state from prior experiments:
-  rm -f data/processed/dataset/train.npz data/processed/dataset/train.json
-  rm -f data/processed/dataset/validation.npz data/processed/dataset/test.npz
-  rm -f data/processed/dataset/manifest.json data/processed/dataset/feature_scaler.json
-  rm -f data/processed/dataset_registry.json
-  rm -rf data/interim/update_state
+
+  macOS / Linux:
+    rm -f data/processed/dataset/train.npz data/processed/dataset/train.json
+    rm -f data/processed/dataset/validation.npz data/processed/dataset/test.npz
+    rm -f data/processed/dataset/manifest.json data/processed/dataset/feature_scaler.json
+    rm -f data/processed/dataset_registry.json
+    rm -rf data/interim/update_state
+
+  Windows (PowerShell):
+    Remove-Item -Force -ErrorAction SilentlyContinue data/processed/dataset/train.npz, data/processed/dataset/train.json
+    Remove-Item -Force -ErrorAction SilentlyContinue data/processed/dataset/validation.npz, data/processed/dataset/test.npz
+    Remove-Item -Force -ErrorAction SilentlyContinue data/processed/dataset/manifest.json, data/processed/dataset/feature_scaler.json
+    Remove-Item -Force -ErrorAction SilentlyContinue data/processed/dataset_registry.json
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue data/interim/update_state
 
   # If lightkurve downloads fail with corrupt cache errors:
-  rm -rf ~/.cache/lightkurve/mastDownload
+  macOS / Linux: rm -rf ~/.cache/lightkurve/mastDownload
+  Windows: Remove-Item -Recurse -Force $env:USERPROFILE\.cache\lightkurve\mastDownload
 
 STEP 1 — Ingest POSITIVE TICs (label=1):
   exodet update -c configs/update.yaml \

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from exodet.experiments.database import ExperimentDatabase, ExperimentRecord
+from exodet.utils.process_metrics import process_rss_bytes
 
 __all__ = ["PerformanceBenchmark", "benchmark_database_scales"]
 
@@ -36,15 +38,11 @@ class PerformanceBenchmark:
 
 
 def _peak_memory_bytes() -> int:
-    try:
-        import resource
-
-        return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
-    except Exception:
-        return 0
+    return process_rss_bytes() or 0
 
 
 def _make_records(n: int) -> list[ExperimentRecord]:
+    tmp_root = Path(tempfile.gettempdir()) / "exodet_bench"
     return [
         ExperimentRecord(
             experiment_id=f"exp_{i:06d}",
@@ -52,7 +50,7 @@ def _make_records(n: int) -> list[ExperimentRecord]:
             status="completed",
             tags=("benchmark",),
             metrics={"roc_auc": 0.5 + (i % 50) / 100.0, "accuracy": 0.8},
-            artifacts={"checkpoint": f"/tmp/ckpt_{i}.pt"},
+            artifacts={"checkpoint": str(tmp_root / f"ckpt_{i}.pt")},
             runtime_seconds=float(i % 100),
         )
         for i in range(n)

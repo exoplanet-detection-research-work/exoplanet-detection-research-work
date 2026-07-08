@@ -20,6 +20,7 @@ from exodet.representation.containers import (
     View,
 )
 from exodet.tce.candidate import TransitCandidate
+from exodet.utils.paths import safe_filename
 from exodet.visualization.style import apply_publication_style, save_figure
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -260,7 +261,7 @@ def generate_representation_figures(
         The written figure paths.
     """
     directory = Path(directory)
-    slug = sample.sample_id.replace(" ", "_").replace("/", "-").lower()
+    slug = safe_filename(sample.sample_id).lower()
 
     folded = pipeline.folder.fold(curve, candidate)
     global_view = pipeline.global_generator.generate(folded)
